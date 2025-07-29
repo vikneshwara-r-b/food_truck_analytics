@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: agg_daily_sales
+    description: "Daily sales aggregation by truck and location with performance rankings and growth metrics"
+    
+  - name: agg_menu_performance
+    description: "Menu item performance analysis with profitability metrics and popularity rankings"
+    
+  - name: agg_customer_360
+    description: "Comprehensive customer analytics with behavioral patterns and lifetime value"
+    
+  - name: agg_franchise_performance
+    description: "Franchise performance aggregation with efficiency metrics and growth tracking"

@@ -1,0 +1,11 @@
+food_truck_snowflake:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      role: DBT_DEV_ROLE
+      warehouse: TASTY_BYTES_DBT_WH
+      database: TASTY_BYTES_ANALYTICS_DB
+      schema: RAW_POS
+      account: 'not_needed'
+      user: 'not_needed'

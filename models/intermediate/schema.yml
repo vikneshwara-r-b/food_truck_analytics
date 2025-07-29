@@ -1,0 +1,11 @@
+version: 2
+
+models:
+  - name: int_orders_enriched
+    description: "Enriched order data combining headers, details, and menu information with business metrics"
+    
+  - name: int_customers_segmented
+    description: "Advanced customer segmentation with RFM analysis and lifetime value calculations"
+    
+  - name: int_menu_profitability
+    description: "Menu item profitability analysis with performance tiers and trend classifications"

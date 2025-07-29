@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: dim_country
+    description: "Country dimension with standardized geographic information and region classifications"
+    
+  - name: dim_city
+    description: "City dimension with country relationships and timezone information"
+    
+  - name: dim_franchise
+    description: "Franchise dimension with owner information and profile completeness metrics"
+    
+  - name: dim_location
+    description: "Location dimension with business potential scoring and operational classifications"
+    
+  - name: dim_menu_item
+    description: "Menu item dimension with profitability analysis and optimization classifications"
+    
+  - name: dim_truck
+    description: "Truck dimension with operational metrics and sustainability scoring"
+    
+  - name: dim_customer
+    description: "Customer dimension with advanced segmentation and value tier classifications"
+    
+  - name: fact_order
+    description: "Order fact table with financial measures and operational metrics"
+    
+  - name: fact_order_detail
+    description: "Order detail fact table with line-level profitability and menu item context"

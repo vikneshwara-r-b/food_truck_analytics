@@ -1,0 +1,42 @@
+{
+  "project_config": {
+    "database": "TASTY_BYTES_ANALYTICS_DB",
+    "schema": "RAW_POS",
+    "project_name": "FOOD_TRUCK_DBT_PROJECT",
+    "default_warehouse": "TASTY_BYTES_DBT_WH",
+    "default_target": "dev"
+  },
+  "tasks": [
+    {
+      "name": "deps_root_task",
+      "enabled": true,
+      "dbt_command": "deps",
+      "depends_on": [],
+      "external_access_integrations": ["DBT_ACCESS_INTEGRATION"]
+    },
+    {
+      "name": "silver_staging_setup",
+      "enabled": true,
+      "dbt_command": "ls --select tag:silver,tag:staging",
+      "depends_on": ["deps_root_task"]
+    },
+    {
+      "name": "silver_staging_transformation",
+      "enabled": true,
+      "dbt_command": "ls --select tag:silver,tag:intermediate",
+      "depends_on": ["silver_staging_setup"]
+    },
+    {
+      "name": "gold_core_transformation",
+      "enabled": true,
+      "dbt_command": "ls --select tag:gold,tag:core",
+      "depends_on": ["silver_staging_transformation"]
+    },
+    {
+      "name": "gold_analytics_transformation",
+      "enabled": true,
+      "dbt_command": "ls --select tag:gold,tag:analytics",
+      "depends_on": ["gold_core_transformation"]
+    }
+  ]
+}
