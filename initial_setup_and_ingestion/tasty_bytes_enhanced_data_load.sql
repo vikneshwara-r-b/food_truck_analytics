@@ -1,18 +1,5 @@
--- create tasty_bytes_analytics_db database
-CREATE OR REPLACE DATABASE tasty_bytes_analytics_db;
-
--- create raw_pos schema
-CREATE OR REPLACE SCHEMA tasty_bytes_analytics_db.raw_pos;
-
--- create raw_customer schema
-CREATE OR REPLACE SCHEMA tasty_bytes_analytics_db.raw_customer;
-
--- create silver schema
-CREATE OR REPLACE SCHEMA tasty_bytes_analytics_db.silver;
-
--- create gold schema
-CREATE OR REPLACE SCHEMA tasty_bytes_analytics_db.gold;
-
+USE ROLE DBT_DEV_ROLE;
+USE WAREHOUSE tasty_bytes_dbt_wh;
 
 /*--
  • file format and stage creation
