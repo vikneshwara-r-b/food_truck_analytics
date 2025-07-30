@@ -10,6 +10,12 @@
 -- STEP 1: CREATE INFRASTRUCTURE
 -- =====================================================================
 
+USE ROLE DBT_DEV_ROLE; 
+USE WAREHOUSE TASTY_BYTES_DBT_WH;
+USE DATABASE TASTY_BYTES_ANALYTICS_DB;
+USE SCHEMA INTEGRATIONS;
+
+
 -- Create a stage for storing JSON configuration files
 CREATE STAGE IF NOT EXISTS dbt_config_stage;
 
@@ -134,6 +140,51 @@ BEGIN
     
     RETURN validation_result;
 END;
+$$;
+
+-- Procedure to load stage files into dbt_task_config table
+CREATE OR REPLACE PROCEDURE process_stage_files(stage_name VARCHAR)
+RETURNS VARCHAR
+LANGUAGE JAVASCRIPT
+EXECUTE AS CALLER
+AS
+$$
+try {
+    var listStmt = snowflake.createStatement({
+        sqlText: "LIST @" + STAGE_NAME
+    });
+    var listResult = listStmt.execute();
+
+    var processedFiles = [];
+    var errorFiles = [];
+    
+    while (listResult.next()) {
+        var fileName = listResult.getColumnValue("name");
+        var baseFileName = fileName.split('/').pop();
+        var idx = baseFileName.lastIndexOf(".");
+        var fileNameNoExt = idx > 0 ? baseFileName.slice(0, idx) : baseFileName;
+
+        try {
+            snowflake.createStatement({
+                sqlText: "CALL load_dbt_config(?, ?)",
+                binds: [baseFileName, fileNameNoExt]
+            }).execute();
+            processedFiles.push("load_dbt_config called for: " + baseFileName + " / " + fileNameNoExt);
+        } catch (err) {
+            errorFiles.push(baseFileName + ": " + err.message);
+        }
+    }
+
+    return JSON.stringify({
+        "processed_files": processedFiles,
+        "error_files": errorFiles,
+        "total_processed": processedFiles.length,
+        "total_errors": errorFiles.length
+    });
+
+} catch (err) {
+    return "Error: " + err.message;
+}
 $$;
 
 -- =====================================================================
@@ -310,7 +361,7 @@ $$;
 -- =====================================================================
 
 -- Procedure to execute the generated SQL (create tasks)
-CREATE OR REPLACE PROCEDURE execute_dbt_tasks(feed_name_param STRING)
+CREATE OR REPLACE PROCEDURE create_dbt_tasks(feed_name_param STRING)
 RETURNS STRING
 LANGUAGE SQL
 AS
@@ -672,55 +723,6 @@ END;
 $$;
 
 -- =====================================================================
--- STEP 7: MONITORING VIEWS
--- =====================================================================
-
--- View task status with feed filtering
-CREATE OR REPLACE VIEW dbt_task_status AS
-SELECT 
-    name,
-    CASE 
-        WHEN POSITION('_' IN name) > 0 THEN 
-            SUBSTRING(name, 1, POSITION('_' IN name) - 1)
-        ELSE 'unknown'
-    END as feed_name,
-    database_name,
-    schema_name,
-    state,
-    scheduled_time,
-    warehouse,
-    created_on,
-    last_suspended_on,
-    last_started_on,
-    last_completed_on
-FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY())
-WHERE name LIKE '%dbt%'
-ORDER BY created_on DESC;
-
--- View task run history with feed filtering
-CREATE OR REPLACE VIEW dbt_task_run_history AS
-SELECT 
-    name,
-    CASE 
-        WHEN POSITION('_' IN name) > 0 THEN 
-            SUBSTRING(name, 1, POSITION('_' IN name) - 1)
-        ELSE 'unknown'
-    END as feed_name,
-    database_name,
-    schema_name,
-    query_id,
-    state,
-    scheduled_time,
-    query_start_time,
-    next_scheduled_time,
-    completed_time,
-    error_code,
-    error_message
-FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY())
-WHERE name LIKE '%dbt%'
-ORDER BY scheduled_time DESC;
-
--- =====================================================================
 -- USAGE EXAMPLES
 -- =====================================================================
 
@@ -737,7 +739,7 @@ ORDER BY scheduled_time DESC;
 -- CALL preview_dbt_tasks('my_feed_name');
 
 -- 5. Execute the task generation for a specific feed
--- CALL execute_dbt_tasks('my_feed_name');
+-- CALL create_dbt_tasks('my_feed_name');
 
 -- 6. Check created tasks
 -- SHOW TASKS LIKE '%my_feed_name%';
