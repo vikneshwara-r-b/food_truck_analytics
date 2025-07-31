@@ -5,44 +5,39 @@ on:
     branches: [ "feature/initial-project-setup" ]
   workflow_dispatch:
 
-env:
-  SNOWSQL_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-  SNOWSQL_USER: ${{ secrets.SNOWFLAKE_USER }}
-  SNOWSQL_PWD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-  SNOWSQL_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
-  SNOWSQL_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
-  SNOWSQL_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
-  SNOWSQL_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
-
 jobs:
   deploy-dbt-tasks:
     runs-on: ubuntu-latest
-    
+    container:
+      image: snowflakedb/snowsql:latest
+      
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
-
-    - name: Install SnowSQL with dependencies
+      
+    - name: Configure and test SnowSQL
+      env:
+        SNOWSQL_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+        SNOWSQL_USER: ${{ secrets.SNOWFLAKE_USER }}
+        SNOWSQL_PWD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+        SNOWSQL_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+        SNOWSQL_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+        SNOWSQL_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+        SNOWSQL_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
       run: |
-        # Install system dependencies
-        sudo apt-get update
-        sudo apt-get install -y libssl-dev libffi-dev openssl ca-certificates
-        
-        # Download and install latest SnowSQL
-        curl -O https://sfc-repo.snowflakecomputing.com/snowsql/bootstrap/1.2/linux_x86_64/snowsql-1.2.28-linux_x86_64.bash
-        SNOWSQL_DEST=~/bin SNOWSQL_LOGIN_SHELL=~/.profile bash snowsql-1.2.28-linux_x86_64.bash
-        echo "~/bin" >> $GITHUB_PATH
-        
-        # Set environment variables for crypto libraries
-        echo "LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-        
-    - name: Test SnowSQL installation
-      run: |
-        ~/bin/snowsql --version
-        ldd ~/bin/snowsql | grep -i crypto
-
+        echo "Testing SnowSQL connection..."
+        snowsql --version
+        snowsql -q "SELECT CURRENT_VERSION();" -o friendly=false -o header=false -o timing=false
         
     - name: Copy JSON files to Snowflake stage
+      env:
+        SNOWSQL_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+        SNOWSQL_USER: ${{ secrets.SNOWFLAKE_USER }}
+        SNOWSQL_PWD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+        SNOWSQL_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+        SNOWSQL_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+        SNOWSQL_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+        SNOWSQL_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
       run: |
         # Check if metadata directory exists and has JSON files
         if [ -d "metadata" ] && [ -n "$(find metadata -name '*.json' -type f)" ]; then
@@ -52,7 +47,7 @@ jobs:
           for json_file in metadata/*.json; do
             if [ -f "$json_file" ]; then
               echo "Copying $json_file to @dbt_config_stage"
-              ~/bin/snowsql -q "PUT file://$PWD/$json_file @dbt_config_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE" -o friendly=false -o header=false -o timing=false
+              snowsql -q "PUT file://$PWD/$json_file @dbt_config_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE" -o friendly=false -o header=false -o timing=false
             fi
           done
         else
@@ -61,16 +56,32 @@ jobs:
         fi
         
     - name: Process stage files
+      env:
+        SNOWSQL_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+        SNOWSQL_USER: ${{ secrets.SNOWFLAKE_USER }}
+        SNOWSQL_PWD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+        SNOWSQL_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+        SNOWSQL_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+        SNOWSQL_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+        SNOWSQL_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
       run: |
         echo "Invoking process_stage_files stored procedure..."
-        ~/bin/snowsql -q "CALL process_stage_files('dbt_config_stage');" -o friendly=false -o header=false -o timing=false
+        snowsql -q "CALL process_stage_files('dbt_config_stage');" -o friendly=false -o header=false -o timing=false
         
     - name: Get feed names and process tasks
+      env:
+        SNOWSQL_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+        SNOWSQL_USER: ${{ secrets.SNOWFLAKE_USER }}
+        SNOWSQL_PWD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+        SNOWSQL_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+        SNOWSQL_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+        SNOWSQL_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+        SNOWSQL_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
       run: |
         echo "Getting feed names from dbt_task_config table..."
         
         # Get all feed names from the table
-        feed_names=$(~/bin/snowsql -q "SELECT DISTINCT feed_name FROM dbt_task_config;" -o friendly=false -o header=false -o timing=false -o output_format=plain | grep -v '^$' | tr -d '\r')
+        feed_names=$(snowsql -q "SELECT DISTINCT feed_name FROM dbt_task_config;" -o friendly=false -o header=false -o timing=false -o output_format=plain | grep -v '^$' | tr -d '\r')
         
         if [ -z "$feed_names" ]; then
           echo "No feed names found in dbt_task_config table"
@@ -86,7 +97,7 @@ jobs:
             
             # Step 1: Validate configuration
             echo "  1. Validating configuration for feed: $feed_name"
-            validation_result=$(~/bin/snowsql -q "CALL validate_dbt_config('$feed_name');" -o friendly=false -o header=false -o timing=false -o output_format=plain)
+            validation_result=$(snowsql -q "CALL validate_dbt_config('$feed_name');" -o friendly=false -o header=false -o timing=false -o output_format=plain)
             echo "  Validation result: $validation_result"
             
             if [[ $validation_result == *"Error"* ]]; then
@@ -97,7 +108,7 @@ jobs:
             
             # Step 2: Create dbt tasks
             echo "  2. Creating dbt tasks for feed: $feed_name"
-            create_result=$(~/bin/snowsql -q "CALL create_dbt_tasks('$feed_name');" -o friendly=false -o header=false -o timing=false -o output_format=plain)
+            create_result=$(snowsql -q "CALL create_dbt_tasks('$feed_name');" -o friendly=false -o header=false -o timing=false -o output_format=plain)
             echo "  Create result: $create_result"
             
             if [[ $create_result == *"Error"* ]]; then
@@ -108,7 +119,7 @@ jobs:
             
             # Step 3: Resume all dbt tasks
             echo "  3. Resuming dbt tasks for feed: $feed_name"
-            resume_result=$(~/bin/snowsql -q "CALL resume_all_dbt_tasks('$feed_name');" -o friendly=false -o header=false -o timing=false -o output_format=plain)
+            resume_result=$(snowsql -q "CALL resume_all_dbt_tasks('$feed_name');" -o friendly=false -o header=false -o timing=false -o output_format=plain)
             echo "  Resume result: $resume_result"
             
             if [[ $resume_result == *"Error"* ]]; then
@@ -122,14 +133,22 @@ jobs:
         done
         
     - name: Show deployment summary
+      env:
+        SNOWSQL_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+        SNOWSQL_USER: ${{ secrets.SNOWFLAKE_USER }}
+        SNOWSQL_PWD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+        SNOWSQL_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+        SNOWSQL_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+        SNOWSQL_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+        SNOWSQL_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
       run: |
         echo "Deployment Summary:"
         echo "=================="
         
         # Show all feeds and their task counts
         echo "Feed Summary:"
-        ~/bin/snowsql -q "CALL list_all_feeds();" -o friendly=false -o header=true -o timing=false
+        snowsql -q "CALL list_all_feeds();" -o friendly=false -o header=true -o timing=false
         
         echo ""
         echo "Tasks created in this deployment:"
-        ~/bin/snowsql -q "SHOW TASKS;" -o friendly=false -o header=true -o timing=false | head -20
+        snowsql -q "SHOW TASKS;" -o friendly=false -o header=true -o timing=false | head -20
