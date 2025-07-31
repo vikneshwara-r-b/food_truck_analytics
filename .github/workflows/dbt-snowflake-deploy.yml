@@ -1,4 +1,4 @@
-name: DBT Snowflake Task Deployment
+name: DBT Snowflake Config Deployment
 
 on:
   push:
@@ -34,18 +34,18 @@ jobs:
         cat > ~/.snowsql/config << EOF
         [connections]
         [connections.default]
-        accountname = ${{ env.SNOWFLAKE_ACCOUNT }}
-        username = ${{ env.SNOWFLAKE_USER }}
-        password = ${{ env.SNOWFLAKE_PASSWORD }}
-        dbname = ${{ env.SNOWFLAKE_DATABASE }}
-        schemaname = ${{ env.SNOWFLAKE_SCHEMA }}
-        warehousename = ${{ env.SNOWFLAKE_WAREHOUSE }}
-        rolename = ${{ env.SNOWFLAKE_ROLE }}
+        accountname = $SNOWFLAKE_ACCOUNT
+        username = $SNOWFLAKE_USER
+        password = $SNOWFLAKE_PASSWORD
+        dbname = $SNOWFLAKE_DATABASE
+        schemaname = $SNOWFLAKE_SCHEMA
+        warehousename = $SNOWFLAKE_WAREHOUSE
+        rolename = $SNOWFLAKE_ROLE
         EOF
 
     - name: Test Snowflake Connection
       run: |
-        snowsql -q "SELECT CURRENT_VERSION();"
+        snowsql -c default -q "SELECT CURRENT_VERSION();"
 
     - name: Check for JSON Files
       id: check_files
@@ -65,26 +65,26 @@ jobs:
         echo "Uploading JSON files to dbt_config_stage..."
         for json_file in $(find metadata -name '*.json' -type f); do
           echo "Uploading: $json_file"
-          snowsql -q "PUT 'file://$PWD/$json_file' @dbt_config_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE;"
+          snowsql -c default -q "PUT 'file://$PWD/$json_file' @dbt_config_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE;"
         done
 
     - name: List Files in Stage
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
         echo "Files in dbt_config_stage:"
-        snowsql -q "LIST @dbt_config_stage;"
+        snowsql -c default -q "LIST @dbt_config_stage;"
 
     - name: Process Stage Files
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
         echo "Calling process_stage_files stored procedure..."
-        snowsql -q "CALL process_stage_files('dbt_config_stage');"
+        snowsql -c default -q "CALL process_stage_files('dbt_config_stage');"
 
     - name: Get Feed Names from dbt_task_config
       id: get_feeds
       run: |
         echo "Retrieving feed names from dbt_task_config table..."
-        snowsql -q "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" -o output_format=csv -o friendly=false -o header=false > feed_names.txt
+        snowsql -c default -q "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" -o output_format=csv -o friendly=false -o header=false > feed_names.txt
         
         # Remove any empty lines and quotes
         sed -i '/^[[:space:]]*$/d' feed_names.txt
@@ -106,19 +106,19 @@ jobs:
             echo "Processing feed: $feed_name"
             
             echo "Step 1: Validating DBT config for feed: $feed_name"
-            snowsql -q "CALL validate_dbt_config('$feed_name');" || {
+            snowsql -c default -q "CALL validate_dbt_config('$feed_name');" || {
               echo "Error: validate_dbt_config failed for feed: $feed_name"
               exit 1
             }
             
             echo "Step 2: Creating DBT tasks for feed: $feed_name"
-            snowsql -q "CALL create_dbt_tasks('$feed_name');" || {
+            snowsql -c default -q "CALL create_dbt_tasks('$feed_name');" || {
               echo "Error: create_dbt_tasks failed for feed: $feed_name"
               exit 1
             }
             
             echo "Step 3: Resuming all DBT tasks for feed: $feed_name"
-            snowsql -q "CALL resume_all_dbt_tasks('$feed_name');" || {
+            snowsql -c default -q "CALL resume_all_dbt_tasks('$feed_name');" || {
               echo "Error: resume_all_dbt_tasks failed for feed: $feed_name"
               exit 1
             }
