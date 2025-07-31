@@ -22,20 +22,25 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Install SnowSQL
+    - name: Install SnowSQL with dependencies
       run: |
-        # Download and install the latest SnowSQL version
+        # Install system dependencies
+        sudo apt-get update
+        sudo apt-get install -y libssl-dev libffi-dev openssl ca-certificates
+        
+        # Download and install latest SnowSQL
         curl -O https://sfc-repo.snowflakecomputing.com/snowsql/bootstrap/1.2/linux_x86_64/snowsql-1.2.28-linux_x86_64.bash
         SNOWSQL_DEST=~/bin SNOWSQL_LOGIN_SHELL=~/.profile bash snowsql-1.2.28-linux_x86_64.bash
         echo "~/bin" >> $GITHUB_PATH
         
-        # Install required system dependencies
-        sudo apt-get update
-        sudo apt-get install -y libssl-dev libffi-dev
-
+        # Set environment variables for crypto libraries
+        echo "LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+        
     - name: Test SnowSQL installation
       run: |
         ~/bin/snowsql --version
+        ldd ~/bin/snowsql | grep -i crypto
+
         
     - name: Copy JSON files to Snowflake stage
       run: |
