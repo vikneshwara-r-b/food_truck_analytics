@@ -3,8 +3,6 @@ name: DBT Snowflake Task Deployment
 on:
   push:
     branches: [ "feature/initial-project-setup" ]
-    paths:
-      - 'metadata/*.json'
   workflow_dispatch:
 
 env:
