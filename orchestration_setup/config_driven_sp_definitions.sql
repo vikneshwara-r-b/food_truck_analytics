@@ -17,7 +17,7 @@ USE SCHEMA INTEGRATIONS;
 
 
 -- Create a stage for storing JSON configuration files
-CREATE STAGE IF NOT EXISTS dbt_config_stage;
+CREATE STAGE IF NOT EXISTS dbt_config_stage DIRECTORY = ( ENABLE = TRUE );
 
 -- Create a table to store the parsed JSON configuration
 CREATE OR REPLACE TABLE dbt_task_config (
@@ -167,7 +167,7 @@ try {
         try {
             snowflake.createStatement({
                 sqlText: "CALL load_dbt_config(?, ?)",
-                binds: [baseFileName, fileNameNoExt]
+                binds: [fileNameNoExt, baseFileName]
             }).execute();
             processedFiles.push("load_dbt_config called for: " + baseFileName + " / " + fileNameNoExt);
         } catch (err) {
@@ -676,30 +676,34 @@ DECLARE
     res RESULTSET;
 BEGIN
     res := (
-        SELECT 
-            dtc.feed_name,
-            dtc.loaded_at,
-            ARRAY_SIZE(dtc.config_data:tasks) as total_tasks,
-            (
-                SELECT COUNT(*)
-                FROM TABLE(FLATTEN(dtc.config_data:tasks)) t
-                WHERE COALESCE(t.value:enabled::BOOLEAN, TRUE) = TRUE
-            ) as enabled_tasks,
-            (
-                SELECT COUNT(*)
-                FROM TABLE(FLATTEN(dtc.config_data:tasks)) t
-                WHERE COALESCE(t.value:enabled::BOOLEAN, TRUE) = FALSE
-            ) as disabled_tasks
-        FROM dbt_task_config dtc 
-        ORDER BY dtc.loaded_at DESC
+WITH flattened_tasks AS (
+    SELECT 
+        dtc.feed_name,
+        dtc.loaded_at,
+        dtc.config_data:tasks as tasks_array,
+        t.value as task_config,
+        COALESCE(t.value:enabled::BOOLEAN, TRUE) as is_enabled
+    FROM dbt_task_config dtc,
+    TABLE(FLATTEN(dtc.config_data:tasks)) t
+)
+SELECT 
+    feed_name,
+    loaded_at,
+    ARRAY_SIZE(tasks_array) as total_tasks,
+    SUM(CASE WHEN is_enabled = TRUE THEN 1 ELSE 0 END) as enabled_tasks,
+    SUM(CASE WHEN is_enabled = FALSE THEN 1 ELSE 0 END) as disabled_tasks
+FROM flattened_tasks
+GROUP BY feed_name, loaded_at, tasks_array
+ORDER BY loaded_at DESC
     );
     RETURN TABLE(res);
 END;
 $$;
 
+
 -- Procedure to show detailed task status for a specific feed
 CREATE OR REPLACE PROCEDURE show_feed_task_status(feed_name_param STRING)
-RETURNS TABLE (task_name STRING, enabled BOOLEAN, dbt_command STRING, schedule STRING, depends_on ARRAY)
+RETURNS TABLE (task_name STRING, enabled BOOLEAN, dbt_command STRING, schedule STRING, depends_on VARIANT)
 LANGUAGE SQL
 AS
 $$
@@ -712,7 +716,7 @@ BEGIN
             COALESCE(t.value:enabled::BOOLEAN, TRUE) as enabled,
             t.value:dbt_command::STRING as dbt_command,
             t.value:schedule::STRING as schedule,
-            t.value:depends_on as depends_on
+            t.value:depends_on::VARIANT as depends_on
         FROM dbt_task_config dtc,
              TABLE(FLATTEN(dtc.config_data:tasks)) t
         WHERE dtc.feed_name = :feed_name_param
@@ -759,6 +763,9 @@ $$;
 -- 11. Enable/disable specific tasks by updating JSON and reloading
 -- Update your JSON file to change "enabled": true/false for specific tasks
 -- Then reload: CALL load_dbt_config('my_feed_name', 'updated_config.json');
+
+-- 12. To load all JSON files from DBT_CONFIG_STAGE into dbt_task_config table
+-- CALL process_stage_files('DBT_CONFIG_STAGE');
 
 -- =====================================================================
 -- SAMPLE JSON CONFIGURATION FILE (config.json)
