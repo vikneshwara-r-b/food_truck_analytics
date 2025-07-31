@@ -1,8 +1,8 @@
 {
   "project_config": {
     "database": "TASTY_BYTES_ANALYTICS_DB",
-    "schema": "RAW_POS",
-    "project_name": "FOOD_TRUCK_DBT_PROJECT",
+    "schema": "INTEGRATIONS",
+    "project_name": "FOOD_TRUCK_ANALYTICS_DBT_PROJECT",
     "default_warehouse": "TASTY_BYTES_DBT_WH",
     "default_target": "dev"
   },
