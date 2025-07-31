@@ -1,0 +1,127 @@
+name: DBT Snowflake Task Deployment
+
+on:
+  push:
+    branches: [ feature/initial-project-setup ]
+    paths:
+      - 'metadata/**/*.json'
+  workflow_dispatch:
+
+env:
+  SNOWSQL_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+  SNOWSQL_USER: ${{ secrets.SNOWFLAKE_USER }}
+  SNOWSQL_PWD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+  SNOWSQL_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+  SNOWSQL_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+  SNOWSQL_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+  SNOWSQL_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
+
+jobs:
+  deploy-dbt-tasks:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Install SnowSQL
+      run: |
+        curl -O https://sfc-repo.snowflakecomputing.com/snowsql/bootstrap/1.2/linux_x86_64/snowsql-1.2.21-linux_x86_64.bash
+        SNOWSQL_DEST=~/bin SNOWSQL_LOGIN_SHELL=~/.profile bash snowsql-1.2.21-linux_x86_64.bash
+        echo "~/bin" >> $GITHUB_PATH
+        
+    - name: Test SnowSQL installation
+      run: |
+        ~/bin/snowsql --version
+        
+    - name: Copy JSON files to Snowflake stage
+      run: |
+        # Check if metadata directory exists and has JSON files
+        if [ -d "metadata" ] && [ -n "$(find metadata -name '*.json' -type f)" ]; then
+          echo "Found JSON files in metadata directory"
+          
+          # Copy all JSON files from metadata directory to dbt_config_stage
+          for json_file in metadata/*.json; do
+            if [ -f "$json_file" ]; then
+              echo "Copying $json_file to @dbt_config_stage"
+              ~/bin/snowsql -q "PUT file://$PWD/$json_file @dbt_config_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE" -o friendly=false -o header=false -o timing=false
+            fi
+          done
+        else
+          echo "No JSON files found in metadata directory"
+          exit 1
+        fi
+        
+    - name: Process stage files
+      run: |
+        echo "Invoking process_stage_files stored procedure..."
+        ~/bin/snowsql -q "CALL process_stage_files('dbt_config_stage');" -o friendly=false -o header=false -o timing=false
+        
+    - name: Get feed names and process tasks
+      run: |
+        echo "Getting feed names from dbt_task_config table..."
+        
+        # Get all feed names from the table
+        feed_names=$(~/bin/snowsql -q "SELECT DISTINCT feed_name FROM dbt_task_config;" -o friendly=false -o header=false -o timing=false -o output_format=plain | grep -v '^$' | tr -d '\r')
+        
+        if [ -z "$feed_names" ]; then
+          echo "No feed names found in dbt_task_config table"
+          exit 1
+        fi
+        
+        echo "Found feeds: $feed_names"
+        
+        # Process each feed
+        echo "$feed_names" | while IFS= read -r feed_name; do
+          if [ -n "$feed_name" ]; then
+            echo "Processing feed: $feed_name"
+            
+            # Step 1: Validate configuration
+            echo "  1. Validating configuration for feed: $feed_name"
+            validation_result=$(~/bin/snowsql -q "CALL validate_dbt_config('$feed_name');" -o friendly=false -o header=false -o timing=false -o output_format=plain)
+            echo "  Validation result: $validation_result"
+            
+            if [[ $validation_result == *"Error"* ]]; then
+              echo "  ERROR: Configuration validation failed for feed: $feed_name"
+              echo "  $validation_result"
+              continue
+            fi
+            
+            # Step 2: Create dbt tasks
+            echo "  2. Creating dbt tasks for feed: $feed_name"
+            create_result=$(~/bin/snowsql -q "CALL create_dbt_tasks('$feed_name');" -o friendly=false -o header=false -o timing=false -o output_format=plain)
+            echo "  Create result: $create_result"
+            
+            if [[ $create_result == *"Error"* ]]; then
+              echo "  ERROR: Task creation failed for feed: $feed_name"
+              echo "  $create_result"
+              continue
+            fi
+            
+            # Step 3: Resume all dbt tasks
+            echo "  3. Resuming dbt tasks for feed: $feed_name"
+            resume_result=$(~/bin/snowsql -q "CALL resume_all_dbt_tasks('$feed_name');" -o friendly=false -o header=false -o timing=false -o output_format=plain)
+            echo "  Resume result: $resume_result"
+            
+            if [[ $resume_result == *"Error"* ]]; then
+              echo "  ERROR: Task resume failed for feed: $feed_name"
+              echo "  $resume_result"
+              continue
+            fi
+            
+            echo "  Successfully processed feed: $feed_name"
+          fi
+        done
+        
+    - name: Show deployment summary
+      run: |
+        echo "Deployment Summary:"
+        echo "=================="
+        
+        # Show all feeds and their task counts
+        echo "Feed Summary:"
+        ~/bin/snowsql -q "CALL list_all_feeds();" -o friendly=false -o header=true -o timing=false
+        
+        echo ""
+        echo "Tasks created in this deployment:"
+        ~/bin/snowsql -q "SHOW TASKS;" -o friendly=false -o header=true -o timing=false | head -20
