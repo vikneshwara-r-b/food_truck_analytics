@@ -59,32 +59,28 @@ jobs:
         # Set proper permissions
         chmod 600 ~/.snowsql/config
 
+    - name: Debug Connection Parameters
+      run: |
+        echo "Debugging connection parameters..."
+        echo "Account length: ${#SNOWFLAKE_ACCOUNT}"
+        echo "User length: ${#SNOWFLAKE_USER}"
+        echo "Database length: ${#SNOWFLAKE_DATABASE}"
+        echo "Account starts with: ${SNOWFLAKE_ACCOUNT:0:3}..."
+        echo "User: $SNOWFLAKE_USER"
+        
+        # Check for special characters that might cause issues
+        if [[ "$SNOWFLAKE_ACCOUNT" =~ [^a-zA-Z0-9._-] ]]; then
+          echo "Warning: Account name contains special characters"
+        fi
+
     - name: Test Snowflake Connection
       run: |
-        # Test with explicit connection parameters to avoid libcrypto issues
-        ~/bin/snowsql \
-          -a "$SNOWFLAKE_ACCOUNT" \
-          -u "$SNOWFLAKE_USER" \
-          -p "$SNOWFLAKE_PASSWORD" \
-          -d "$SNOWFLAKE_DATABASE" \
-          -s "$SNOWFLAKE_SCHEMA" \
-          -w "$SNOWFLAKE_WAREHOUSE" \
-          -r "$SNOWFLAKE_ROLE" \
-          -q "SELECT CURRENT_VERSION();" \
-          -o exit_on_error=true
+        # Test using config file first
+        ~/bin/snowsql -c default -q "SELECT CURRENT_VERSION();" -o exit_on_error=true
 
     - name: Create Stage if Not Exists
       run: |
-        ~/bin/snowsql \
-          -a "$SNOWFLAKE_ACCOUNT" \
-          -u "$SNOWFLAKE_USER" \
-          -p "$SNOWFLAKE_PASSWORD" \
-          -d "$SNOWFLAKE_DATABASE" \
-          -s "$SNOWFLAKE_SCHEMA" \
-          -w "$SNOWFLAKE_WAREHOUSE" \
-          -r "$SNOWFLAKE_ROLE" \
-          -q "CREATE STAGE IF NOT EXISTS dbt_config_stage;" \
-          -o exit_on_error=true
+        ~/bin/snowsql -c default -q "CREATE STAGE IF NOT EXISTS dbt_config_stage;" -o exit_on_error=true
 
     - name: Check for JSON Files
       id: check_files
@@ -104,65 +100,26 @@ jobs:
         echo "Uploading JSON files to dbt_config_stage..."
         for json_file in $(find metadata -name '*.json' -type f); do
           echo "Uploading: $json_file"
-          ~/bin/snowsql \
-            -a "$SNOWFLAKE_ACCOUNT" \
-            -u "$SNOWFLAKE_USER" \
-            -p "$SNOWFLAKE_PASSWORD" \
-            -d "$SNOWFLAKE_DATABASE" \
-            -s "$SNOWFLAKE_SCHEMA" \
-            -w "$SNOWFLAKE_WAREHOUSE" \
-            -r "$SNOWFLAKE_ROLE" \
-            -q "PUT 'file://$PWD/$json_file' @dbt_config_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE;" \
-            -o exit_on_error=true
+          ~/bin/snowsql -c default -q "PUT 'file://$PWD/$json_file' @dbt_config_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE;" -o exit_on_error=true
         done
 
     - name: List Files in Stage
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
         echo "Files in dbt_config_stage:"
-        ~/bin/snowsql \
-          -a "$SNOWFLAKE_ACCOUNT" \
-          -u "$SNOWFLAKE_USER" \
-          -p "$SNOWFLAKE_PASSWORD" \
-          -d "$SNOWFLAKE_DATABASE" \
-          -s "$SNOWFLAKE_SCHEMA" \
-          -w "$SNOWFLAKE_WAREHOUSE" \
-          -r "$SNOWFLAKE_ROLE" \
-          -q "LIST @dbt_config_stage;" \
-          -o exit_on_error=true
+        ~/bin/snowsql -c default -q "LIST @dbt_config_stage;" -o exit_on_error=true
 
     - name: Process Stage Files
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
         echo "Calling process_stage_files stored procedure..."
-        ~/bin/snowsql \
-          -a "$SNOWFLAKE_ACCOUNT" \
-          -u "$SNOWFLAKE_USER" \
-          -p "$SNOWFLAKE_PASSWORD" \
-          -d "$SNOWFLAKE_DATABASE" \
-          -s "$SNOWFLAKE_SCHEMA" \
-          -w "$SNOWFLAKE_WAREHOUSE" \
-          -r "$SNOWFLAKE_ROLE" \
-          -q "CALL process_stage_files('dbt_config_stage');" \
-          -o exit_on_error=true
+        ~/bin/snowsql -c default -q "CALL process_stage_files('dbt_config_stage');" -o exit_on_error=true
 
     - name: Get Feed Names from dbt_task_config
       id: get_feeds
       run: |
         echo "Retrieving feed names from dbt_task_config table..."
-        ~/bin/snowsql \
-          -a "$SNOWFLAKE_ACCOUNT" \
-          -u "$SNOWFLAKE_USER" \
-          -p "$SNOWFLAKE_PASSWORD" \
-          -d "$SNOWFLAKE_DATABASE" \
-          -s "$SNOWFLAKE_SCHEMA" \
-          -w "$SNOWFLAKE_WAREHOUSE" \
-          -r "$SNOWFLAKE_ROLE" \
-          -q "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" \
-          -o output_format=csv \
-          -o friendly=false \
-          -o header=false \
-          -o exit_on_error=true > feed_names.txt
+        ~/bin/snowsql -c default -q "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" -o output_format=csv -o friendly=false -o header=false -o exit_on_error=true > feed_names.txt
         
         # Remove any empty lines and quotes
         sed -i '/^[[:space:]]*$/d' feed_names.txt
@@ -184,46 +141,19 @@ jobs:
             echo "Processing feed: $feed_name"
             
             echo "Step 1: Validating DBT config for feed: $feed_name"
-            ~/bin/snowsql \
-              -a "$SNOWFLAKE_ACCOUNT" \
-              -u "$SNOWFLAKE_USER" \
-              -p "$SNOWFLAKE_PASSWORD" \
-              -d "$SNOWFLAKE_DATABASE" \
-              -s "$SNOWFLAKE_SCHEMA" \
-              -w "$SNOWFLAKE_WAREHOUSE" \
-              -r "$SNOWFLAKE_ROLE" \
-              -q "CALL validate_dbt_config('$feed_name');" \
-              -o exit_on_error=true || {
+            ~/bin/snowsql -c default -q "CALL validate_dbt_config('$feed_name');" -o exit_on_error=true || {
               echo "Error: validate_dbt_config failed for feed: $feed_name"
               exit 1
             }
             
             echo "Step 2: Creating DBT tasks for feed: $feed_name"
-            ~/bin/snowsql \
-              -a "$SNOWFLAKE_ACCOUNT" \
-              -u "$SNOWFLAKE_USER" \
-              -p "$SNOWFLAKE_PASSWORD" \
-              -d "$SNOWFLAKE_DATABASE" \
-              -s "$SNOWFLAKE_SCHEMA" \
-              -w "$SNOWFLAKE_WAREHOUSE" \
-              -r "$SNOWFLAKE_ROLE" \
-              -q "CALL create_dbt_tasks('$feed_name');" \
-              -o exit_on_error=true || {
+            ~/bin/snowsql -c default -q "CALL create_dbt_tasks('$feed_name');" -o exit_on_error=true || {
               echo "Error: create_dbt_tasks failed for feed: $feed_name"
               exit 1
             }
             
             echo "Step 3: Resuming all DBT tasks for feed: $feed_name"
-            ~/bin/snowsql \
-              -a "$SNOWFLAKE_ACCOUNT" \
-              -u "$SNOWFLAKE_USER" \
-              -p "$SNOWFLAKE_PASSWORD" \
-              -d "$SNOWFLAKE_DATABASE" \
-              -s "$SNOWFLAKE_SCHEMA" \
-              -w "$SNOWFLAKE_WAREHOUSE" \
-              -r "$SNOWFLAKE_ROLE" \
-              -q "CALL resume_all_dbt_tasks('$feed_name');" \
-              -o exit_on_error=true || {
+            ~/bin/snowsql -c default -q "CALL resume_all_dbt_tasks('$feed_name');" -o exit_on_error=true || {
               echo "Error: resume_all_dbt_tasks failed for feed: $feed_name"
               exit 1
             }
