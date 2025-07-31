@@ -9,7 +9,7 @@ jobs:
   deploy-dbt-tasks:
     runs-on: ubuntu-latest
     container:
-      image: snowflakedb/snowsql:latest
+      image: kurron/snowsql:latest
       
     steps:
     - name: Checkout repository
