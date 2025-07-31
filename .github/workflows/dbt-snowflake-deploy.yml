@@ -2,7 +2,7 @@ name: DBT Snowflake Config Deployment
 
 on:
   push:
-    branches: [ "feature/initial-project-setup" ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 env:
