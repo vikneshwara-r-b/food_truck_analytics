@@ -21,27 +21,18 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
-      
-    - name: Setup SnowSQL
-      uses: Snowflake-Labs/snowflake-cli-action@v1.3
-      with:
-        cli-version: "latest"
-        default-config-file-path: "./snowsql_config"
-        
-    - name: Create SnowSQL config
+
+    - name: Install SnowSQL
       run: |
-        mkdir -p ~/.snowsql
-        cat > ~/.snowsql/config << EOF
-        [connections]
-        accountname = ${{ secrets.SNOWFLAKE_ACCOUNT }}
-        username = ${{ secrets.SNOWFLAKE_USER }}
-        password = ${{ secrets.SNOWFLAKE_PASSWORD }}
-        rolename = ${{ secrets.SNOWFLAKE_ROLE }}
-        warehousename = ${{ secrets.SNOWFLAKE_WAREHOUSE }}
-        dbname = ${{ secrets.SNOWFLAKE_DATABASE }}
-        schemaname = ${{ secrets.SNOWFLAKE_SCHEMA }}
-        EOF
+        # Download and install the latest SnowSQL version
+        curl -O https://sfc-repo.snowflakecomputing.com/snowsql/bootstrap/1.2/linux_x86_64/snowsql-1.2.28-linux_x86_64.bash
+        SNOWSQL_DEST=~/bin SNOWSQL_LOGIN_SHELL=~/.profile bash snowsql-1.2.28-linux_x86_64.bash
+        echo "~/bin" >> $GITHUB_PATH
         
+        # Install required system dependencies
+        sudo apt-get update
+        sudo apt-get install -y libssl-dev libffi-dev
+
     - name: Test SnowSQL installation
       run: |
         ~/bin/snowsql --version
