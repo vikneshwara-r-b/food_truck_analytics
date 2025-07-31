@@ -2,7 +2,7 @@ name: DBT Snowflake Config Deployment
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "feature/initial-project-setup" ]
   workflow_dispatch:
 
 env:
@@ -78,9 +78,11 @@ jobs:
         # Test using config file first
         ~/bin/snowsql -c default -q "SELECT CURRENT_VERSION();" -o exit_on_error=true
 
-    - name: Create Stage if Not Exists
+    - name: Deploy stored procedure utilities
       run: |
-        ~/bin/snowsql -c default -q "CREATE STAGE IF NOT EXISTS dbt_config_stage;" -o exit_on_error=true
+        # Execute the SQL file containing stored procedure definitions
+        ~/bin/snowsql -c default -f "orchestration_setup/config_driven_sp_definitions.sql" -o exit_on_error=true
+        echo "Stored procedure utilities deployed successfully"
 
     - name: Check for JSON Files
       id: check_files
