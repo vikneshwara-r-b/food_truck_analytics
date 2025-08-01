@@ -65,10 +65,6 @@ jobs:
         role = "$SNOWFLAKE_ROLE"
         [cli.features]
         enable_dbt = true
-        [options]
-        exit_on_error = true
-        friendly = false
-        timing = false
         EOF
         
         # Set proper permissions
@@ -87,11 +83,29 @@ jobs:
         
         # Verify installation
         ls -la ~/bin/snowsql || echo "SnowSQL not found in expected location"
-
-    - name: Test SnowSQL Connection
+  
+    - name: Configure SnowSQL
       run: |
-        # Test using config file first
-        ~/bin/snowsql -q "SELECT CURRENT_VERSION();" -o exit_on_error=true
+        mkdir -p ~/.snowsql
+        cat > ~/.snowsql/config << EOF
+        [connections]
+        [connections.default]
+        accountname = $SNOWFLAKE_ACCOUNT
+        username = $SNOWFLAKE_USER
+        password = $SNOWFLAKE_PASSWORD
+        dbname = $SNOWFLAKE_DATABASE
+        schemaname = $SNOWFLAKE_SCHEMA
+        warehousename = $SNOWFLAKE_WAREHOUSE
+        rolename = $SNOWFLAKE_ROLE
+        
+        [options]
+        exit_on_error = true
+        friendly = false
+        timing = false
+        EOF
+        
+        # Set proper permissions
+        chmod 600 ~/.snowsql/config
 
     - name: Debug Connection Parameters
       run: |
@@ -112,6 +126,12 @@ jobs:
         # Test connection with Snowflake CLI
         snow sql -q "SELECT CURRENT_VERSION();"
         snow stage list --help
+  
+    - name: Test SnowSQL Connection
+      run: |
+        # Test using config file first
+        ~/bin/snowsql -c default -q "SELECT CURRENT_VERSION();" -o exit_on_error=true
+
     
     - name: Install dbt dependencies and deploy DBT project
       run: |
@@ -219,6 +239,7 @@ jobs:
       run: |
         rm -f feed_names.txt
         rm -f ~/.snowflake/config.toml
+        rm -f ~/.snowsql/config
 
     - name: Deployment Summary
       if: always()
