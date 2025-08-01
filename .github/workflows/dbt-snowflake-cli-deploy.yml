@@ -1,4 +1,4 @@
-name: DBT Snowflake CLI deployment
+name: DBT Snowflake CLI Test
 
 on:
   push:
