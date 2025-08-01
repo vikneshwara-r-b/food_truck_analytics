@@ -125,7 +125,6 @@ jobs:
       run: |
         # Test connection with Snowflake CLI
         snow sql -q "SELECT CURRENT_VERSION();"
-        snow stage list --help
   
     - name: Test SnowSQL Connection
       run: |
