@@ -65,10 +65,33 @@ jobs:
         role = "$SNOWFLAKE_ROLE"
         [cli.features]
         enable_dbt = true
+        [options]
+        exit_on_error = true
+        friendly = false
+        timing = false
         EOF
         
         # Set proper permissions
         chmod 600 ~/.snowflake/config.toml
+  
+    - name: Install SnowSQL
+      run: |
+        # Install dependencies
+        sudo apt-get update
+        sudo apt-get install -y curl wget
+        
+        # Download and install the latest SnowSQL
+        curl -O https://sfc-repo.snowflakecomputing.com/snowsql/bootstrap/1.2/linux_x86_64/snowsql-1.2.31-linux_x86_64.bash
+        SNOWSQL_DEST=~/bin SNOWSQL_LOGIN_SHELL=~/.profile bash snowsql-1.2.31-linux_x86_64.bash
+        echo "$HOME/bin" >> $GITHUB_PATH
+        
+        # Verify installation
+        ls -la ~/bin/snowsql || echo "SnowSQL not found in expected location"
+
+    - name: Test SnowSQL Connection
+      run: |
+        # Test using config file first
+        ~/bin/snowsql -c default -q "SELECT CURRENT_VERSION();" -o exit_on_error=true
 
     - name: Debug Connection Parameters
       run: |
@@ -84,7 +107,7 @@ jobs:
           echo "Warning: Account name contains special characters"
         fi
 
-    - name: Test Snowflake Connection
+    - name: Test Snowflake CLI Connection
       run: |
         # Test connection with Snowflake CLI
         snow sql -q "SELECT CURRENT_VERSION();"
@@ -146,10 +169,8 @@ jobs:
     - name: Get Feed Names from dbt_task_config
       id: get_feeds
       run: |
-        echo "Listing help arguments for snow sql command"
-        snow sql --help
         echo "Retrieving feed names from dbt_task_config table..."
-        snow sql -q format=csv no-headers "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" > feed_names.txt
+        ~/bin/snowsql -c default -q "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" -o output_format=csv -o friendly=false -o header=false -o exit_on_error=true > feed_names.txt
         
         # Remove any empty lines and quotes
         sed -i '/^[[:space:]]*$/d' feed_names.txt
