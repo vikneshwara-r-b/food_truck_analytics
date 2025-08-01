@@ -135,7 +135,7 @@ jobs:
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
         echo "Files in dbt_config_stage:"
-        snow stage list dbt_config_stage
+        snow stage list --like "dbt_config_stage"
 
     - name: Process Stage Files
       if: steps.check_files.outputs.json_files_exist == 'true'
