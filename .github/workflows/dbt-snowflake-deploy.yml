@@ -1,4 +1,4 @@
-name: DBT Snowflake Config Deployment
+name: DBT Snowflake CLI Test
 
 on:
   push:
@@ -22,42 +22,51 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Install SnowSQL
+    - name: Install Snowflake CLI
       run: |
-        # Install dependencies
+        # Install Python and pip if not available
         sudo apt-get update
-        sudo apt-get install -y curl wget
+        sudo apt-get install -y python3 python3-pip
         
-        # Download and install the latest SnowSQL
-        curl -O https://sfc-repo.snowflakecomputing.com/snowsql/bootstrap/1.2/linux_x86_64/snowsql-1.2.31-linux_x86_64.bash
-        SNOWSQL_DEST=~/bin SNOWSQL_LOGIN_SHELL=~/.profile bash snowsql-1.2.31-linux_x86_64.bash
-        echo "$HOME/bin" >> $GITHUB_PATH
+        # Install Snowflake CLI via pip
+        pip3 install snowflake-cli-labs
+        
+        # Add Python user bin to PATH
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        
+        # Source the PATH for current session
+        export PATH="$HOME/.local/bin:$PATH"
         
         # Verify installation
-        ls -la ~/bin/snowsql || echo "SnowSQL not found in expected location"
+        snow --version || {
+          echo "Trying alternative installation method..."
+          # Alternative: Direct download method
+          SNOW_VERSION="v2.2.0"
+          curl -L "https://github.com/Snowflake-Labs/snowflake-cli/releases/download/${SNOW_VERSION}/snowflake-cli-linux-x86_64" -o snow
+          chmod +x snow
+          sudo mv snow /usr/local/bin/
+          snow --version
+        }
 
-    - name: Configure SnowSQL
+    - name: Configure Snowflake CLI
       run: |
-        mkdir -p ~/.snowsql
-        cat > ~/.snowsql/config << EOF
-        [connections]
-        [connections.default]
-        accountname = $SNOWFLAKE_ACCOUNT
-        username = $SNOWFLAKE_USER
-        password = $SNOWFLAKE_PASSWORD
-        dbname = $SNOWFLAKE_DATABASE
-        schemaname = $SNOWFLAKE_SCHEMA
-        warehousename = $SNOWFLAKE_WAREHOUSE
-        rolename = $SNOWFLAKE_ROLE
+        # Create config directory
+        mkdir -p ~/.snowflake
         
-        [options]
-        exit_on_error = true
-        friendly = false
-        timing = false
+        # Create connection configuration
+        cat > ~/.snowflake/config.toml << EOF
+        [connections.default]
+        account = "$SNOWFLAKE_ACCOUNT"
+        user = "$SNOWFLAKE_USER"
+        password = "$SNOWFLAKE_PASSWORD"
+        database = "$SNOWFLAKE_DATABASE"
+        schema = "$SNOWFLAKE_SCHEMA"
+        warehouse = "$SNOWFLAKE_WAREHOUSE"
+        role = "$SNOWFLAKE_ROLE"
         EOF
         
         # Set proper permissions
-        chmod 600 ~/.snowsql/config
+        chmod 600 ~/.snowflake/config.toml
 
     - name: Debug Connection Parameters
       run: |
@@ -75,108 +84,9 @@ jobs:
 
     - name: Test Snowflake Connection
       run: |
-        # Test using config file first
-        ~/bin/snowsql -c default -q "SELECT CURRENT_VERSION();" -o exit_on_error=true
-
-    - name: Deploy stored procedure utilities
-      run: |
-        # Execute the SQL file containing stored procedure definitions
-        ~/bin/snowsql -c default -f "orchestration_setup/config_driven_sp_definitions.sql" -o exit_on_error=true
-        echo "Stored procedure utilities deployed successfully"
-
-    - name: Check for JSON Files
-      id: check_files
-      run: |
-        if [ -d "metadata" ] && [ "$(find metadata -name '*.json' -type f | wc -l)" -gt 0 ]; then
-          echo "json_files_exist=true" >> $GITHUB_OUTPUT
-          echo "Found JSON files in metadata directory"
-          find metadata -name '*.json' -type f
-        else
-          echo "json_files_exist=false" >> $GITHUB_OUTPUT
-          echo "No JSON files found in metadata directory"
-        fi
-
-    - name: Upload JSON Files to Stage
-      if: steps.check_files.outputs.json_files_exist == 'true'
-      run: |
-        echo "Uploading JSON files to dbt_config_stage..."
-        for json_file in $(find metadata -name '*.json' -type f); do
-          echo "Uploading: $json_file"
-          ~/bin/snowsql -c default -q "PUT 'file://$PWD/$json_file' @dbt_config_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE;" -o exit_on_error=true
-        done
-
-    - name: List Files in Stage
-      if: steps.check_files.outputs.json_files_exist == 'true'
-      run: |
-        echo "Files in dbt_config_stage:"
-        ~/bin/snowsql -c default -q "LIST @dbt_config_stage;" -o exit_on_error=true
-
-    - name: Process Stage Files
-      if: steps.check_files.outputs.json_files_exist == 'true'
-      run: |
-        echo "Calling process_stage_files stored procedure..."
-        ~/bin/snowsql -c default -q "CALL process_stage_files('dbt_config_stage');" -o exit_on_error=true
-
-    - name: Get Feed Names from dbt_task_config
-      id: get_feeds
-      run: |
-        echo "Retrieving feed names from dbt_task_config table..."
-        ~/bin/snowsql -c default -q "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" -o output_format=csv -o friendly=false -o header=false -o exit_on_error=true > feed_names.txt
+        # Ensure snow is in PATH for current session
+        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
         
-        # Remove any empty lines and quotes
-        sed -i '/^[[:space:]]*$/d' feed_names.txt
-        sed -i 's/"//g' feed_names.txt
-        
-        echo "Feed names found:"
-        cat feed_names.txt
-        
-        # Convert to comma-separated for matrix strategy
-        feeds=$(tr '\n' ',' < feed_names.txt | sed 's/,$//')
-        echo "feeds_matrix=[$feeds]" >> $GITHUB_OUTPUT
-
-    - name: Process Each Feed
-      if: steps.get_feeds.outputs.feeds_matrix != '[]'
-      run: |
-        # Read feed names and process each one
-        while IFS= read -r feed_name; do
-          if [ -n "$feed_name" ]; then
-            echo "Processing feed: $feed_name"
-            
-            echo "Step 1: Validating DBT config for feed: $feed_name"
-            ~/bin/snowsql -c default -q "CALL validate_dbt_config('$feed_name');" -o exit_on_error=true || {
-              echo "Error: validate_dbt_config failed for feed: $feed_name"
-              exit 1
-            }
-            
-            echo "Step 2: Creating DBT tasks for feed: $feed_name"
-            ~/bin/snowsql -c default -q "CALL create_dbt_tasks('$feed_name');" -o exit_on_error=true || {
-              echo "Error: create_dbt_tasks failed for feed: $feed_name"
-              exit 1
-            }
-            
-            echo "Step 3: Resuming all DBT tasks for feed: $feed_name"
-            ~/bin/snowsql -c default -q "CALL resume_all_dbt_tasks('$feed_name');" -o exit_on_error=true || {
-              echo "Error: resume_all_dbt_tasks failed for feed: $feed_name"
-              exit 1
-            }
-            
-            echo "Successfully processed feed: $feed_name"
-            echo "----------------------------------------"
-          fi
-        done < feed_names.txt
-
-    - name: Cleanup Temporary Files
-      if: always()
-      run: |
-        rm -f feed_names.txt
-        rm -f ~/.snowsql/config
-
-    - name: Deployment Summary
-      if: always()
-      run: |
-        echo "=== Deployment Summary ==="
-        echo "Repository: ${{ github.repository }}"
-        echo "Branch: ${{ github.ref_name }}"
-        echo "Commit: ${{ github.sha }}"
-        echo "Workflow Status: ${{ job.status }}"
-        echo "=========================="
+        # Test connection with Snowflake CLI
+        snow sql -q "SELECT CURRENT_VERSION();"
+ 
