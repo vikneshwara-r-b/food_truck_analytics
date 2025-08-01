@@ -135,11 +135,8 @@ jobs:
     - name: Upload JSON Files to Stage
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
-        echo "Uploading JSON files to dbt_config_stage..."
-        for json_file in $(find metadata -name '*.json' -type f); do
-          echo "Uploading: $json_file"
-          snow stage put "$json_file" "@dbt_config_stage" --overwrite
-        done
+        echo "Uploading JSON files to Stage"
+        snow stage copy metadata @dbt_config_stage
 
     - name: List Files in Stage
       if: steps.check_files.outputs.json_files_exist == 'true'
