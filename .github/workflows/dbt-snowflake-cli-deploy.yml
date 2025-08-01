@@ -65,9 +65,6 @@ jobs:
         role = "$SNOWFLAKE_ROLE"
         [cli.features]
         enable_dbt = true
-        # Configure external integration at connection level
-        [connections.default.options]
-        external_access_integrations = ["DBT_ACCESS_INTEGRATION"]
         EOF
         
         # Set proper permissions
@@ -107,8 +104,11 @@ jobs:
     
     - name: Install dbt dependencies using external integration
       run: |
-        # Use the external integration for network access
-        snow dbt execute FOOD_TRUCK_ANALYTICS_DBT_PROJECT deps
+        # Execute dbt deps using external access integration
+        snow dbt execute FOOD_TRUCK_ANALYTICS_DBT_PROJECT \
+          --command deps \
+          --connection default \
+          --external-access-integrations DBT_ACCESS_INTEGRATION
 
     - name: Deploy stored procedure utilities
       run: |
