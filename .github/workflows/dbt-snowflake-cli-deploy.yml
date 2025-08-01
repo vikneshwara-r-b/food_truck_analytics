@@ -146,8 +146,10 @@ jobs:
     - name: Get Feed Names from dbt_task_config
       id: get_feeds
       run: |
+        echo "Listing help arguments for snow sql command"
+        snow sql --help
         echo "Retrieving feed names from dbt_task_config table..."
-        snow sql -q "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" --format csv --no-headers > feed_names.txt
+        snow sql -q format=csv no-headers "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" > feed_names.txt
         
         # Remove any empty lines and quotes
         sed -i '/^[[:space:]]*$/d' feed_names.txt
