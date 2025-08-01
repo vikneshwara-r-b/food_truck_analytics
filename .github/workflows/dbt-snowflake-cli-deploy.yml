@@ -1,18 +1,18 @@
-name: DBT Snowflake Config Deployment
+name: DBT Snowflake CLI deployment
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "feature/initial-project-setup" ]
   workflow_dispatch:
 
 env:
   SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
   SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
   SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-  SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
-  SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
-  SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
-  SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+  SNOWFLAKE_DATABASE: ${{ vars.SNOWFLAKE_DATABASE }}
+  SNOWFLAKE_SCHEMA: ${{ vars.SNOWFLAKE_SCHEMA }}
+  SNOWFLAKE_WAREHOUSE: ${{ vars.SNOWFLAKE_WAREHOUSE }}
+  SNOWFLAKE_ROLE: ${{ vars.SNOWFLAKE_ROLE }}
 
 jobs:
   deploy-dbt-config:
@@ -24,14 +24,29 @@ jobs:
 
     - name: Install Snowflake CLI
       run: |
-        # Download and install Snowflake CLI
-        curl -sL https://developers.snowflake.com/snowflake-cli/install.sh | bash
+        # Install Python and pip if not available
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip
         
-        # Add to PATH
+        # Install Snowflake CLI via pip
+        pip3 install snowflake-cli-labs
+        
+        # Add Python user bin to PATH
         echo "$HOME/.local/bin" >> $GITHUB_PATH
         
+        # Source the PATH for current session
+        export PATH="$HOME/.local/bin:$PATH"
+        
         # Verify installation
-        snow --version
+        snow --version || {
+          echo "Trying alternative installation method..."
+          # Alternative: Direct download method
+          SNOW_VERSION="v2.2.0"
+          curl -L "https://github.com/Snowflake-Labs/snowflake-cli/releases/download/${SNOW_VERSION}/snowflake-cli-linux-x86_64" -o snow
+          chmod +x snow
+          sudo mv snow /usr/local/bin/
+          snow --version
+        }
 
     - name: Configure Snowflake CLI
       run: |
@@ -48,6 +63,8 @@ jobs:
         schema = "$SNOWFLAKE_SCHEMA"
         warehouse = "$SNOWFLAKE_WAREHOUSE"
         role = "$SNOWFLAKE_ROLE"
+        [cli.features]
+        enable_dbt = true
         EOF
         
         # Set proper permissions
@@ -69,5 +86,164 @@ jobs:
 
     - name: Test Snowflake Connection
       run: |
+        # Ensure snow is in PATH for current session
+        # export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+        
         # Test connection with Snowflake CLI
         snow sql -q "SELECT CURRENT_VERSION();"
+
+    - name: Test SnowDBT commands setup
+      run: |
+        # Ensure snow is in PATH for current session
+        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+        
+        # To check if dbt appears in the list of commands 
+        snow --help
+
+        # List all available dbt projects
+        snow dbt list --debug
+  
+    - name: Deploy DBT project
+      run: |
+        # Ensure snow is in PATH for current session
+        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+        
+        # Deploy DBT project from current branch
+        snow dbt deploy FOOD_TRUCK_ANALYTICS_DBT_PROJECT --force --debug
+    
+    - name: Install DBT dependencies
+      run: |
+        # Ensure snow is in PATH for current session
+        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+        
+        # Install dependencies for DBT project
+        snow dbt execute FOOD_TRUCK_ANALYTICS_DBT_PROJECT deps
+
+    - name: Deploy stored procedure utilities
+      run: |
+        # Ensure snow is in PATH
+        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+        
+        # Execute the SQL file containing stored procedure definitions
+        if [ -f "orchestration_setup/config_driven_sp_definitions.sql" ]; then
+          echo "Deploying stored procedures from config_driven_sp_definitions.sql..."
+          snow sql -f "orchestration_setup/config_driven_sp_definitions.sql"
+          echo "Stored procedure utilities deployed successfully"
+        else
+          echo "Warning: orchestration_setup/config_driven_sp_definitions.sql not found"
+          echo "Available files in orchestration_setup directory:"
+          ls -la orchestration_setup/ || echo "orchestration_setup directory not found"
+          exit 1
+        fi
+
+    - name: Check for JSON Files
+      id: check_files
+      run: |
+        if [ -d "metadata" ] && [ "$(find metadata -name '*.json' -type f | wc -l)" -gt 0 ]; then
+          echo "json_files_exist=true" >> $GITHUB_OUTPUT
+          echo "Found JSON files in metadata directory"
+          find metadata -name '*.json' -type f
+        else
+          echo "json_files_exist=false" >> $GITHUB_OUTPUT
+          echo "No JSON files found in metadata directory"
+        fi
+
+    - name: Upload JSON Files to Stage
+      if: steps.check_files.outputs.json_files_exist == 'true'
+      run: |
+        # Ensure snow is in PATH
+        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+        
+        echo "Uploading JSON files to dbt_config_stage..."
+        for json_file in $(find metadata -name '*.json' -type f); do
+          echo "Uploading: $json_file"
+          snow stage put "$json_file" "@dbt_config_stage" --overwrite
+        done
+
+    - name: List Files in Stage
+      if: steps.check_files.outputs.json_files_exist == 'true'
+      run: |
+        # Ensure snow is in PATH
+        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+        
+        echo "Files in dbt_config_stage:"
+        snow stage list "@dbt_config_stage"
+
+    - name: Process Stage Files
+      if: steps.check_files.outputs.json_files_exist == 'true'
+      run: |
+        # Ensure snow is in PATH
+        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+        
+        echo "Calling process_stage_files stored procedure..."
+        snow sql -q "CALL process_stage_files('dbt_config_stage');"
+
+    - name: Get Feed Names from dbt_task_config
+      id: get_feeds
+      run: |
+        # Ensure snow is in PATH
+        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+        
+        echo "Retrieving feed names from dbt_task_config table..."
+        snow sql -q "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" --format csv --no-headers > feed_names.txt
+        
+        # Remove any empty lines and quotes
+        sed -i '/^[[:space:]]*$/d' feed_names.txt
+        sed -i 's/"//g' feed_names.txt
+        
+        echo "Feed names found:"
+        cat feed_names.txt
+        
+        # Convert to comma-separated for matrix strategy
+        feeds=$(tr '\n' ',' < feed_names.txt | sed 's/,$//')
+        echo "feeds_matrix=[$feeds]" >> $GITHUB_OUTPUT
+
+    - name: Process Each Feed
+      if: steps.get_feeds.outputs.feeds_matrix != '[]'
+      run: |
+        # Ensure snow is in PATH
+        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+        
+        # Read feed names and process each one
+        while IFS= read -r feed_name; do
+          if [ -n "$feed_name" ]; then
+            echo "Processing feed: $feed_name"
+            
+            echo "Step 1: Validating DBT config for feed: $feed_name"
+            snow sql -q "CALL validate_dbt_config('$feed_name');" || {
+              echo "Error: validate_dbt_config failed for feed: $feed_name"
+              exit 1
+            }
+            
+            echo "Step 2: Creating DBT tasks for feed: $feed_name"
+            snow sql -q "CALL create_dbt_tasks('$feed_name');" || {
+              echo "Error: create_dbt_tasks failed for feed: $feed_name"
+              exit 1
+            }
+            
+            echo "Step 3: Resuming all DBT tasks for feed: $feed_name"
+            snow sql -q "CALL resume_all_dbt_tasks('$feed_name');" || {
+              echo "Error: resume_all_dbt_tasks failed for feed: $feed_name"
+              exit 1
+            }
+            
+            echo "Successfully processed feed: $feed_name"
+            echo "----------------------------------------"
+          fi
+        done < feed_names.txt
+
+    - name: Cleanup Temporary Files
+      if: always()
+      run: |
+        rm -f feed_names.txt
+        rm -f ~/.snowflake/config.toml
+
+    - name: Deployment Summary
+      if: always()
+      run: |
+        echo "=== Deployment Summary ==="
+        echo "Repository: ${{ github.repository }}"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Workflow Status: ${{ job.status }}"
+        echo "=========================="
