@@ -88,10 +88,6 @@ jobs:
       run: |
         # Test connection with Snowflake CLI
         snow sql -q "SELECT CURRENT_VERSION();"
-
-    - name: Check for options in snow stage copy command
-      run: |
-        snow stage copy --help
     
     - name: Install dbt dependencies and deploy DBT project
       run: |
@@ -132,7 +128,7 @@ jobs:
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
         echo "Uploading JSON files to Stage"
-        snow stage copy metadata @dbt_config_stage --overwrite=True
+        snow stage copy --overwrite metadata @dbt_config_stage
 
     - name: List Files in Stage
       if: steps.check_files.outputs.json_files_exist == 'true'
