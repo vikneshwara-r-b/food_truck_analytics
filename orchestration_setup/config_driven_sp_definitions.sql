@@ -209,7 +209,6 @@ DECLARE
     dbt_command STRING;
     target STRING;
     depends_on VARIANT;
-    external_access_integrations VARIANT;
     enabled BOOLEAN;
     database_name STRING;
     schema_name STRING;
@@ -272,7 +271,6 @@ BEGIN
             dbt_command := tasks_array[i]:dbt_command::STRING;
             target := COALESCE(tasks_array[i]:target::STRING, default_target);
             depends_on := tasks_array[i]:depends_on;
-            external_access_integrations := tasks_array[i]:external_access_integrations;
             
             -- Build task full name with feed prefix
             task_full_name := database_name || '.' || schema_name || '.' || feed_name_param || '_' || task_name;
@@ -306,20 +304,6 @@ BEGIN
             -- Add main command
             task_sql := task_sql || '\n\tAS EXECUTE DBT PROJECT ' || project_full_name || 
                        ' args=''' || dbt_command || ' --target ' || target || '''';
-            
-            -- Add external access integrations
-            IF (external_access_integrations IS NOT NULL AND ARRAY_SIZE(external_access_integrations) > 0) THEN
-                external_access_clause := ' external_access_integrations = (';
-                FOR j IN 0 TO (ARRAY_SIZE(external_access_integrations) - 1) DO
-                    integration_name := external_access_integrations[j]::STRING;
-                    IF (j > 0) THEN
-                        external_access_clause := external_access_clause || ', ';
-                    END IF;
-                    external_access_clause := external_access_clause || integration_name;
-                END FOR;
-                external_access_clause := external_access_clause || ')';
-                task_sql := task_sql || external_access_clause;
-            END IF;
             
             task_sql := task_sql || ';\n\n';
             final_sql := final_sql || task_sql;
@@ -377,7 +361,6 @@ DECLARE
     dbt_command STRING;
     target STRING;
     depends_on VARIANT;
-    external_access_integrations VARIANT;
     enabled BOOLEAN;
     database_name STRING;
     schema_name STRING;
@@ -434,7 +417,6 @@ BEGIN
             dbt_command := tasks_array[i]:dbt_command::STRING;
             target := COALESCE(tasks_array[i]:target::STRING, default_target);
             depends_on := tasks_array[i]:depends_on;
-            external_access_integrations := tasks_array[i]:external_access_integrations;
             
             -- Build task full name with feed prefix
             task_full_name := database_name || '.' || schema_name || '.' || feed_name_param || '_' || task_name;
@@ -492,20 +474,6 @@ BEGIN
             -- Add main command
             task_sql := task_sql || '\n\tAS EXECUTE DBT PROJECT ' || project_full_name || 
                        ' args=''' || dbt_command || ' --target ' || target || '''';
-            
-            -- Add external access integrations
-            IF (external_access_integrations IS NOT NULL AND ARRAY_SIZE(external_access_integrations) > 0) THEN
-                external_access_clause := ' external_access_integrations = (';
-                FOR j IN 0 TO (ARRAY_SIZE(external_access_integrations) - 1) DO
-                    integration_name := external_access_integrations[j]::STRING;
-                    IF (j > 0) THEN
-                        external_access_clause := external_access_clause || ', ';
-                    END IF;
-                    external_access_clause := external_access_clause || integration_name;
-                END FOR;
-                external_access_clause := external_access_clause || ')';
-                task_sql := task_sql || external_access_clause;
-            END IF;
             
             -- Execute this individual task creation
             EXECUTE IMMEDIATE :task_sql;
@@ -787,16 +755,14 @@ $$;
       "schedule": "60 MINUTES",
       "dbt_command": "deps",
       "target": "dev",
-      "depends_on": [],
-      "external_access_integrations": ["DBT_ACCESS_INTEGRATION"]
+      "depends_on": []
     },
     {
       "name": "dbt_run_task",
       "enabled": true,
       "warehouse": "TASTY_BYTES_DBT_WH",
       "dbt_command": "run",
-      "depends_on": ["dbt_deps_task"],
-      "external_access_integrations": []
+      "depends_on": ["dbt_deps_task"]
     },
     {
       "name": "dbt_test_task",
@@ -804,24 +770,21 @@ $$;
       "warehouse": "TASTY_BYTES_DBT_WH",
       "dbt_command": "test",
       "target": "dev",
-      "depends_on": ["dbt_run_task"],
-      "external_access_integrations": []
+      "depends_on": ["dbt_run_task"]
     },
     {
       "name": "dbt_snapshot_task",
       "enabled": true,
       "warehouse": "TASTY_BYTES_DBT_WH",
       "dbt_command": "snapshot",
-      "depends_on": ["dbt_run_task"],
-      "external_access_integrations": []
+      "depends_on": ["dbt_run_task"]
     },
     {
       "name": "dbt_docs_task",
       "enabled": false,
       "warehouse": "TASTY_BYTES_DBT_WH",
       "dbt_command": "docs generate",
-      "depends_on": ["dbt_test_task"],
-      "external_access_integrations": []
+      "depends_on": ["dbt_test_task"]
     }
   ]
 }

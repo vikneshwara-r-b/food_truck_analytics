@@ -1,0 +1,73 @@
+name: DBT Snowflake Config Deployment
+
+on:
+  push:
+    branches: [ "feature/initial-project-setup" ]
+  workflow_dispatch:
+
+env:
+  SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+  SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+  SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+  SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+  SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
+  SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+  SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+
+jobs:
+  deploy-dbt-config:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install Snowflake CLI
+      run: |
+        # Download and install Snowflake CLI
+        curl -sL https://developers.snowflake.com/snowflake-cli/install.sh | bash
+        
+        # Add to PATH
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        
+        # Verify installation
+        snow --version
+
+    - name: Configure Snowflake CLI
+      run: |
+        # Create config directory
+        mkdir -p ~/.snowflake
+        
+        # Create connection configuration
+        cat > ~/.snowflake/config.toml << EOF
+        [connections.default]
+        account = "$SNOWFLAKE_ACCOUNT"
+        user = "$SNOWFLAKE_USER"
+        password = "$SNOWFLAKE_PASSWORD"
+        database = "$SNOWFLAKE_DATABASE"
+        schema = "$SNOWFLAKE_SCHEMA"
+        warehouse = "$SNOWFLAKE_WAREHOUSE"
+        role = "$SNOWFLAKE_ROLE"
+        EOF
+        
+        # Set proper permissions
+        chmod 600 ~/.snowflake/config.toml
+
+    - name: Debug Connection Parameters
+      run: |
+        echo "Debugging connection parameters..."
+        echo "Account length: ${#SNOWFLAKE_ACCOUNT}"
+        echo "User length: ${#SNOWFLAKE_USER}"
+        echo "Database length: ${#SNOWFLAKE_DATABASE}"
+        echo "Account starts with: ${SNOWFLAKE_ACCOUNT:0:3}..."
+        echo "User: $SNOWFLAKE_USER"
+        
+        # Check for special characters that might cause issues
+        if [[ "$SNOWFLAKE_ACCOUNT" =~ [^a-zA-Z0-9._-] ]]; then
+          echo "Warning: Account name contains special characters"
+        fi
+
+    - name: Test Snowflake Connection
+      run: |
+        # Test connection with Snowflake CLI
+        snow sql -q "SELECT CURRENT_VERSION();"
