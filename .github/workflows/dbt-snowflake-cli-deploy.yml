@@ -89,13 +89,9 @@ jobs:
         # Test connection with Snowflake CLI
         snow sql -q "SELECT CURRENT_VERSION();"
 
-    - name: Test SnowDBT commands setup
+    - name: Check for options in snow stage copy command
       run: |
-        # To check if dbt appears in the list of commands 
-        snow --help
-
-        # List all available dbt projects
-        snow dbt list -v
+        snow stage copy --help
     
     - name: Install dbt dependencies and deploy DBT project
       run: |
