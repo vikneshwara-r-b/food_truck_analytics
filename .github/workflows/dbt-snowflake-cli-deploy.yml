@@ -86,44 +86,43 @@ jobs:
 
     - name: Test Snowflake Connection
       run: |
-        # Ensure snow is in PATH for current session
-        # export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-        
         # Test connection with Snowflake CLI
         snow sql -q "SELECT CURRENT_VERSION();"
 
     - name: Test SnowDBT commands setup
       run: |
-        # Ensure snow is in PATH for current session
-        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-        
         # To check if dbt appears in the list of commands 
         snow --help
 
         # List all available dbt projects
-        snow dbt list --debug
+        snow dbt list -v
   
     - name: Deploy DBT project
-      run: |
-        # Ensure snow is in PATH for current session
-        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-        
+      run: |        
         # Deploy DBT project from current branch
-        snow dbt deploy FOOD_TRUCK_ANALYTICS_DBT_PROJECT --force --debug
+        snow dbt deploy FOOD_TRUCK_ANALYTICS_DBT_PROJECT --force -v
     
-    - name: Install DBT dependencies
+    - name: Install dbt dependencies with retry
       run: |
-        # Ensure snow is in PATH for current session
-        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
         
-        # Install dependencies for DBT project
-        snow dbt execute FOOD_TRUCK_ANALYTICS_DBT_PROJECT deps
+        # Retry logic for network connectivity issues
+        for i in {1..3}; do
+          echo "Attempt $i: Installing dbt dependencies..."
+          if snow dbt execute FOOD_TRUCK_ANALYTICS_DBT_PROJECT deps --timeout 300; then
+            echo "Dependencies installed successfully"
+            break
+          else
+            echo "Attempt $i failed. Waiting 30 seconds before retry..."
+            sleep 30
+            if [ $i -eq 3 ]; then
+              echo "All attempts failed. Exiting..."
+              exit 1
+            fi
+          fi
+        done
 
     - name: Deploy stored procedure utilities
       run: |
-        # Ensure snow is in PATH
-        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-        
         # Execute the SQL file containing stored procedure definitions
         if [ -f "orchestration_setup/config_driven_sp_definitions.sql" ]; then
           echo "Deploying stored procedures from config_driven_sp_definitions.sql..."
@@ -151,9 +150,6 @@ jobs:
     - name: Upload JSON Files to Stage
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
-        # Ensure snow is in PATH
-        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-        
         echo "Uploading JSON files to dbt_config_stage..."
         for json_file in $(find metadata -name '*.json' -type f); do
           echo "Uploading: $json_file"
@@ -163,27 +159,18 @@ jobs:
     - name: List Files in Stage
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
-        # Ensure snow is in PATH
-        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-        
         echo "Files in dbt_config_stage:"
         snow stage list "@dbt_config_stage"
 
     - name: Process Stage Files
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
-        # Ensure snow is in PATH
-        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-        
         echo "Calling process_stage_files stored procedure..."
         snow sql -q "CALL process_stage_files('dbt_config_stage');"
 
     - name: Get Feed Names from dbt_task_config
       id: get_feeds
       run: |
-        # Ensure snow is in PATH
-        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-        
         echo "Retrieving feed names from dbt_task_config table..."
         snow sql -q "SELECT DISTINCT feed_name FROM dbt_task_config ORDER BY feed_name;" --format csv --no-headers > feed_names.txt
         
@@ -201,9 +188,6 @@ jobs:
     - name: Process Each Feed
       if: steps.get_feeds.outputs.feeds_matrix != '[]'
       run: |
-        # Ensure snow is in PATH
-        export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-        
         # Read feed names and process each one
         while IFS= read -r feed_name; do
           if [ -n "$feed_name" ]; then
