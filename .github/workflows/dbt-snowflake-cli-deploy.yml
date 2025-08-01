@@ -91,7 +91,7 @@ jobs:
     - name: Test SnowSQL Connection
       run: |
         # Test using config file first
-        ~/bin/snowsql -c default -q "SELECT CURRENT_VERSION();" -o exit_on_error=true
+        ~/bin/snowsql -q "SELECT CURRENT_VERSION();" -o exit_on_error=true
 
     - name: Debug Connection Parameters
       run: |
