@@ -96,19 +96,15 @@ jobs:
 
         # List all available dbt projects
         snow dbt list -v
-  
-    - name: Deploy DBT project
-      run: |        
-        # Deploy DBT project from current branch
-        snow dbt deploy FOOD_TRUCK_ANALYTICS_DBT_PROJECT --force -v
     
-    - name: Install dbt dependencies using external integration
+    - name: Install dbt dependencies and deploy DBT project
       run: |
-        # Execute dbt deps using external access integration
-        snow dbt execute FOOD_TRUCK_ANALYTICS_DBT_PROJECT \
-          --command deps \
-          --connection default \
-          --external-access-integrations DBT_ACCESS_INTEGRATION
+         # Install dbt locally
+         pip install dbt-snowflake==1.9.2
+         # Install dependencies locally
+         dbt deps
+         # Deploy DBT project from current branch
+         snow dbt deploy FOOD_TRUCK_ANALYTICS_DBT_PROJECT --force -v
 
     - name: Deploy stored procedure utilities
       run: |
