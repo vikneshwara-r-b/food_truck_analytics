@@ -136,13 +136,13 @@ jobs:
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
         echo "Uploading JSON files to Stage"
-        snow stage copy metadata @dbt_config_stage
+        snow stage copy metadata @dbt_config_stage --overwrite=True
 
     - name: List Files in Stage
       if: steps.check_files.outputs.json_files_exist == 'true'
       run: |
         echo "Files in dbt_config_stage:"
-        snow stage list "@dbt_config_stage"
+        snow stage list dbt_config_stage
 
     - name: Process Stage Files
       if: steps.check_files.outputs.json_files_exist == 'true'
