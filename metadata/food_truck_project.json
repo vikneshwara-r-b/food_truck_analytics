@@ -17,19 +17,49 @@
       "name": "silver_staging_transformation",
       "enabled": true,
       "dbt_command": "run --select tag:silver,tag:intermediate",
-      "depends_on": ["silver_staging_setup"]
+      "depends_on": [
+        "silver_staging_setup"
+      ]
+    },
+    {
+      "name": "silver_staging_dataquality",
+      "enabled": true,
+      "dbt_command": "test --select tag:silver,tag:intermediate",
+      "depends_on": [
+        "silver_staging_transformation"
+      ]
     },
     {
       "name": "gold_core_transformation",
       "enabled": true,
       "dbt_command": "run --select tag:gold,tag:core",
-      "depends_on": ["silver_staging_transformation"]
+      "depends_on": [
+        "silver_staging_dataquality"
+      ]
+    },
+    {
+      "name": "gold_core_dataquality",
+      "enabled": true,
+      "dbt_command": "test --select tag:gold,tag:core",
+      "depends_on": [
+        "gold_core_transformation"
+      ]
     },
     {
       "name": "gold_analytics_transformation",
       "enabled": true,
       "dbt_command": "run --select tag:gold,tag:analytics",
-      "depends_on": ["gold_core_transformation"]
+      "depends_on": [
+        "gold_core_dataquality"
+      ]
+    },
+    {
+      "name": "gold_analytics_dataquality",
+      "enabled": true,
+      "dbt_command": "test --select tag:gold,tag:analytics",
+      "depends_on": [
+        "gold_analytics_transformation"
+      ]
     }
   ]
 }
