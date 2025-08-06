@@ -1,0 +1,386 @@
+# Test Cases for Aggregation Models - Analytics Layer
+
+version: 2
+
+models:
+  # ==============================================
+  # CUSTOMER ANALYTICS TESTS
+  # ==============================================
+  
+  - name: agg_customer_360
+    description: "Comprehensive customer analytics with behavioral patterns and lifetime value"
+    columns:
+      - name: customer_sk
+        description: "Surrogate key for customer dimension"
+        tests:
+          - unique
+          - not_null
+      
+      - name: customer_id
+        description: "Natural key for customer"
+        tests:
+          - unique
+          - not_null
+      
+      - name: total_orders
+        description: "Total number of orders placed by customer"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 10000  # Reasonable max for individual customer
+      
+      - name: total_spent
+        description: "Total amount spent by customer"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100000  # Reasonable max lifetime spend
+      
+      - name: avg_order_value
+        description: "Average order value for customer"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 500
+              config:
+                where: "avg_order_value IS NOT NULL"
+      
+      - name: churn_risk_score
+        description: "Churn risk score from 0.0 to 1.0"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0.0
+              max_value: 1.0
+      
+      - name: customer_journey_stage
+        description: "Customer journey stage classification"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Prospect', 'First Purchase', 'Early Adopter', 'Engaged', 'Loyal', 'Churned', 'At Risk']
+      
+      - name: channel_preference
+        description: "Preferred ordering channel"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Mobile Dominant', 'Walk-up Dominant', 'Online Dominant', 'Multi-Channel']
+      
+      - name: vegetarian_preference_pct
+        description: "Percentage of vegetarian items ordered"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      
+      - name: calculated_lifetime_value
+        description: "Calculated customer lifetime value"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 50000
+    
+    tests:
+      # Custom test: Orders last 90 days should not exceed total orders
+      - dbt_utils.expression_is_true:
+          expression: "orders_last_90_days <= total_orders"
+      
+      # Custom test: Spent last 90 days should not exceed total spent
+      - dbt_utils.expression_is_true:
+          expression: "spent_last_90_days <= total_spent"
+
+  # ==============================================
+  # DAILY SALES ANALYTICS TESTS
+  # ==============================================
+  
+  - name: agg_daily_sales
+    description: "Daily sales aggregation with performance metrics and rankings"
+    columns:
+      - name: sales_date
+        description: "Date of sales analysis"
+        tests:
+          - not_null
+      
+      - name: truck_sk
+        description: "Foreign key to truck dimension"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_truck')
+              field: truck_sk
+              config:
+                where: "truck_sk != '-1'"
+      
+      - name: location_sk
+        description: "Foreign key to location dimension"
+        tests:
+          - relationships:
+              to: ref('dim_location')
+              field: location_sk
+              config:
+                where: "location_sk != '-1'"
+      
+      - name: total_orders
+        description: "Total orders for the day"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1600  # Reasonable daily max per truck/location
+      
+      - name: total_revenue
+        description: "Total revenue for the day"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100000  # Reasonable daily max
+      
+      - name: profit_margin_pct
+        description: "Daily profit margin percentage"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+      
+      - name: daily_revenue_rank
+        description: "Revenue ranking for the day"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 10000  # Reasonable max rank
+      
+      - name: revenue_wow_growth_pct
+        description: "Week-over-week revenue growth percentage"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 1000  # Allow for high growth but cap extreme outliers
+              config:
+                where: "revenue_wow_growth_pct IS NOT NULL"
+      
+      - name: avg_order_value
+        description: "Average order value for the day"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 200
+              config:
+                where: "avg_order_value IS NOT NULL"
+    
+    tests:
+      # Custom test: Profit should equal revenue minus cost of goods
+      - dbt_utils.expression_is_true:
+          expression: "ABS(total_profit - (total_revenue - total_cost_of_goods)) <= 0.05"
+          config:
+            where: "total_cost_of_goods IS NOT NULL"
+      
+      # Custom test: Total items sold should be at least equal to total orders
+      - dbt_utils.expression_is_true:
+          expression: "total_items_sold >= total_orders"
+
+      - dbt_utils.expression_is_true:
+          expression: "sales_date <= CURRENT_DATE()"
+
+  # ==============================================
+  # LOCATION INSIGHTS TESTS
+  # ==============================================
+  
+  - name: agg_location_insights
+    description: "Location performance analysis with foot traffic and optimization insights"
+    columns:
+      - name: location_sk
+        description: "Foreign key to location dimension"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_location')
+              field: location_sk
+              config:
+                where: "location_sk != '-1'"
+      
+      - name: analysis_date
+        description: "Date of analysis"
+        tests:
+          - not_null
+      
+      - name: daily_orders
+        description: "Number of orders for the day"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 2000  # High-traffic location max
+      
+      - name: daily_revenue
+        description: "Revenue for the day"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100000  # High-performing location max
+      
+      - name: revenue_per_truck
+        description: "Revenue generated per truck"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100000  # Reasonable daily max per truck
+      
+      - name: peak_hour_start
+        description: "Peak hour start time"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['06:00', '12:00', '15:00', '18:00']
+      
+      - name: peak_hour_end
+        description: "Peak hour end time"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['10:00', '14:00', '17:00', '21:00']
+      
+      - name: location_performance_category
+        description: "Location performance classification"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Premium Location', 'High Performing', 'Standard', 'Underperforming']
+      
+      - name: weekend_vs_weekday_ratio
+        description: "Weekend vs weekday revenue ratio"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 15  # Allow for high weekend ratios
+              config:
+                where: "weekend_vs_weekday_ratio IS NOT NULL"
+      
+      - name: foot_traffic_score
+        description: "Actual vs estimated foot traffic score"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 200000 # Allow for scores exceeding 100%
+    
+    tests:
+      # Custom test: Peak hour end should be after peak hour start
+      - dbt_utils.expression_is_true:
+          expression: "peak_hour_end > peak_hour_start"
+      
+      # Custom test: Revenue per truck should be reasonable
+      - dbt_utils.expression_is_true:
+          expression: "trucks_served = 0 OR revenue_per_truck = daily_revenue / trucks_served"
+          config:
+            where: "trucks_served IS NOT NULL"
+      
+      - dbt_utils.expression_is_true:
+          expression: "analysis_date <= CURRENT_DATE()"
+
+  # ==============================================
+  # MENU PERFORMANCE TESTS
+  # ==============================================
+  
+  - name: agg_menu_performance
+    description: "Menu item performance analysis with profitability and trend metrics"
+    columns:
+      - name: menu_item_sk
+        description: "Foreign key to menu item dimension"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_menu_item')
+              field: menu_item_sk
+              config:
+                where: "menu_item_sk != '-1'"
+      
+      - name: analysis_date
+        description: "Date of analysis"
+        tests:
+          - not_null
+      
+      - name: total_quantity_sold
+        description: "Total quantity sold for the day"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 50000  # High-volume item max
+      
+      - name: total_revenue
+        description: "Total revenue for the menu item"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 800000  # High-revenue item max
+      
+      - name: profit_margin_pct
+        description: "Profit margin percentage"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+      
+      - name: popularity_rank
+        description: "Popularity ranking for the day"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 10000  # Reasonable max rank
+      
+      - name: peak_meal_period
+        description: "Peak meal period for the item"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Breakfast', 'Lunch', 'Dinner', 'Even Distribution']
+      
+      - name: channel_preference
+        description: "Preferred ordering channel for the item"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Mobile Preferred', 'Walk-up Preferred', 'Balanced']
+      
+      - name: performance_classification
+        description: "Menu item performance classification"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Star Performer', 'Volume Driver', 'Niche Premium', 'Underperformer', 'Standard']
+      
+      - name: avg_selling_price
+        description: "Average selling price"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              config:
+                where: "avg_selling_price IS NOT NULL"
+    
+    tests:
+      # Custom test: Profit calculation accuracy
+      - dbt_utils.expression_is_true:
+          expression: "ABS(total_profit - (total_revenue - total_cost_of_goods)) <= 0.05"
+          config:
+            where: "total_cost_of_goods IS NOT NULL"
+      
+      # Custom test: Orders containing item should not exceed total quantity
+      - dbt_utils.expression_is_true:
+          expression: "orders_containing_item <= total_quantity_sold"
+      
+      - dbt_utils.expression_is_true:
+          expression: "analysis_date <= CURRENT_DATE()"

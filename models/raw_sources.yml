@@ -1,0 +1,45 @@
+version: 2
+
+sources:
+  - name: raw_pos
+    description: "Raw Point of Sale system data from food truck operations"
+    database: TASTY_BYTES_ANALYTICS_DB
+    schema: raw_pos
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 12, period: hour}
+    
+    tables:
+      - name: country
+        description: "Raw country and city reference data with ISO codes and population information"
+      
+      - name: franchise
+        description: "Franchise owner information including contact details and location data"
+      
+      - name: location
+        description: "Operating locations where food trucks serve customers with geographic details"
+      
+      - name: menu
+        description: "Menu items with pricing, categorization, and nutritional information"
+      
+      - name: truck
+        description: "Food truck fleet information including vehicle specifications and operational details"
+      
+      - name: order_header
+        description: "Order transaction headers with customer, timing, and financial information"
+        loaded_at_field: order_ts
+        freshness:
+          warn_after: {count: 2, period: hour}
+          error_after: {count: 6, period: hour}
+      
+      - name: order_detail
+        description: "Order line item details with quantities, pricing, and menu item references"
+
+  - name: raw_customer
+    description: "Raw customer system data from loyalty program"
+    database: TASTY_BYTES_ANALYTICS_DB
+    schema: raw_customer
+    
+    tables:
+      - name: customer_loyalty
+        description: "Customer loyalty program data with demographics and preferences"

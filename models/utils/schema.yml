@@ -1,0 +1,8 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: "Date dimension with business calendar attributes and fiscal year support"
+    
+  - name: dim_time
+    description: "Time dimension with meal period classifications and business hour indicators"
