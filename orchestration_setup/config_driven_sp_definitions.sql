@@ -829,7 +829,7 @@ BEGIN
         
         -- Only resume enabled tasks that are NOT root tasks
         IF (enabled = TRUE) THEN
-            IF (is_root_task = FALSE) THEN
+            IF (is_root_task = FALSE  OR (is_root_task = TRUE and schedule IS NULL)) THEN
                 task_full_name := database_name || '.' || schema_name || '.' || feed_name_param || '_' || task_name;
                 resume_sql := 'ALTER TASK ' || task_full_name || ' RESUME;';
                 EXECUTE IMMEDIATE :resume_sql;
@@ -844,7 +844,7 @@ BEGIN
     END FOR;
     
     RETURN 'Successfully resumed ' || tasks_resumed::STRING || ' enabled child tasks for feed: ' || feed_name_param ||
-           ' (Skipped ' || tasks_skipped::STRING || ' disabled tasks, ' || root_tasks_skipped::STRING || ' root tasks)';
+           ' (Skipped ' || tasks_skipped::STRING || ' disabled tasks, ' || root_tasks_skipped::STRING || ' root task with schedule)';
 END;
 $$;
 
@@ -863,6 +863,7 @@ DECLARE
     task_name STRING;
     task_full_name STRING;
     drop_sql STRING := '';
+    suspend_sql STRING;
     enabled BOOLEAN;
     i INTEGER;
     tasks_dropped INTEGER := 0;
@@ -894,9 +895,13 @@ BEGIN
         -- Only attempt to drop if task was enabled (and therefore created)
         IF (enabled = TRUE) THEN
             task_full_name := database_name || '.' || schema_name || '.' || feed_name_param || '_' || task_name;
+            IF (tasks_array[i]:schedule IS NOT NULL) THEN
+                suspend_sql := 'ALTER TASK ' || task_full_name || ' SUSPEND;';
+                EXECUTE IMMEDIATE :suspend_sql;
+            END IF;
             drop_sql := 'DROP TASK IF EXISTS ' || task_full_name || ';';
             EXECUTE IMMEDIATE :drop_sql;
-            tasks_dropped := tasks_dropped + 1;
+            tasks_dropped := tasks_dropped + 1;   
         ELSE
             tasks_skipped := tasks_skipped + 1;
         END IF;
