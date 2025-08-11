@@ -1,0 +1,339 @@
+name: DBT Snowflake CI/CD deploy
+
+on:
+  push:
+    branches: [ "feature/mutable_task_creation" ]
+  workflow_dispatch:
+
+env:
+  SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+  SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+  SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+  SNOWFLAKE_DATABASE: ${{ vars.SNOWFLAKE_DATABASE }}
+  SNOWFLAKE_SCHEMA: ${{ vars.SNOWFLAKE_SCHEMA }}
+  SNOWFLAKE_WAREHOUSE: ${{ vars.SNOWFLAKE_WAREHOUSE }}
+  SNOWFLAKE_ROLE: ${{ vars.SNOWFLAKE_ROLE }}
+
+jobs:
+  deploy-dbt-config:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install Snowflake CLI
+      run: |
+        # Install Python and pip if not available
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip
+        
+        # Install Snowflake CLI via pip
+        pip3 install snowflake-cli-labs
+        
+        # Add Python user bin to PATH
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        
+        # Source the PATH for current session
+        export PATH="$HOME/.local/bin:$PATH"
+        
+        # Verify installation
+        snow --version || {
+          echo "Trying alternative installation method..."
+          # Alternative: Direct download method
+          SNOW_VERSION="v2.2.0"
+          curl -L "https://github.com/Snowflake-Labs/snowflake-cli/releases/download/${SNOW_VERSION}/snowflake-cli-linux-x86_64" -o snow
+          chmod +x snow
+          sudo mv snow /usr/local/bin/
+          snow --version
+        }
+
+    - name: Configure Snowflake CLI
+      run: |
+        # Create config directory
+        mkdir -p ~/.snowflake
+        
+        # Create connection configuration
+        cat > ~/.snowflake/config.toml << EOF
+        [connections.default]
+        account = "$SNOWFLAKE_ACCOUNT"
+        user = "$SNOWFLAKE_USER"
+        password = "$SNOWFLAKE_PASSWORD"
+        database = "$SNOWFLAKE_DATABASE"
+        schema = "$SNOWFLAKE_SCHEMA"
+        warehouse = "$SNOWFLAKE_WAREHOUSE"
+        role = "$SNOWFLAKE_ROLE"
+        [cli.features]
+        enable_dbt = true
+        EOF
+        
+        # Set proper permissions
+        chmod 600 ~/.snowflake/config.toml
+  
+    - name: Install SnowSQL
+      run: |
+        # Install dependencies
+        sudo apt-get update
+        sudo apt-get install -y curl wget
+        
+        # Download and install the latest SnowSQL
+        curl -O https://sfc-repo.snowflakecomputing.com/snowsql/bootstrap/1.2/linux_x86_64/snowsql-1.2.31-linux_x86_64.bash
+        SNOWSQL_DEST=~/bin SNOWSQL_LOGIN_SHELL=~/.profile bash snowsql-1.2.31-linux_x86_64.bash
+        echo "$HOME/bin" >> $GITHUB_PATH
+        
+        # Verify installation
+        ls -la ~/bin/snowsql || echo "SnowSQL not found in expected location"
+  
+    - name: Configure SnowSQL
+      run: |
+        mkdir -p ~/.snowsql
+        cat > ~/.snowsql/config << EOF
+        [connections]
+        [connections.default]
+        accountname = $SNOWFLAKE_ACCOUNT
+        username = $SNOWFLAKE_USER
+        password = $SNOWFLAKE_PASSWORD
+        dbname = $SNOWFLAKE_DATABASE
+        schemaname = $SNOWFLAKE_SCHEMA
+        warehousename = $SNOWFLAKE_WAREHOUSE
+        rolename = $SNOWFLAKE_ROLE
+        
+        [options]
+        exit_on_error = true
+        friendly = false
+        timing = false
+        EOF
+        
+        # Set proper permissions
+        chmod 600 ~/.snowsql/config
+
+    - name: Debug Connection Parameters
+      run: |
+        echo "Debugging connection parameters..."
+        echo "Account length: ${#SNOWFLAKE_ACCOUNT}"
+        echo "User length: ${#SNOWFLAKE_USER}"
+        echo "Database length: ${#SNOWFLAKE_DATABASE}"
+        echo "Account starts with: ${SNOWFLAKE_ACCOUNT:0:3}..."
+        echo "User: $SNOWFLAKE_USER"
+        
+        # Check for special characters that might cause issues
+        if [[ "$SNOWFLAKE_ACCOUNT" =~ [^a-zA-Z0-9._-] ]]; then
+          echo "Warning: Account name contains special characters"
+        fi
+
+    - name: Test Snowflake CLI Connection
+      run: |
+        # Test connection with Snowflake CLI
+        snow sql -q "SELECT CURRENT_VERSION();"
+  
+    - name: Test SnowSQL Connection
+      run: |
+        # Test using config file first
+        ~/bin/snowsql -c default -q "SELECT CURRENT_VERSION();" -o exit_on_error=true
+
+    - name: Install dbt dependencies and deploy DBT project
+      run: |
+         # Install dbt locally
+         pip install dbt-snowflake==1.9.2
+         # Install dependencies locally
+         dbt deps
+         # Deploy DBT project from current branch
+         snow dbt deploy FOOD_TRUCK_ANALYTICS_DBT_PROJECT --force -v
+
+    - name: Deploy stored procedure utilities
+      run: |
+        # Execute the SQL file containing stored procedure definitions
+        if [ -f "orchestration_setup/config_driven_sp_definitions.sql" ]; then
+          echo "Deploying stored procedures from config_driven_sp_definitions.sql..."
+          snow sql -f "orchestration_setup/config_driven_sp_definitions.sql"
+          echo "Stored procedure utilities deployed successfully"
+        else
+          echo "Warning: orchestration_setup/config_driven_sp_definitions.sql not found"
+          echo "Available files in orchestration_setup directory:"
+          ls -la orchestration_setup/ || echo "orchestration_setup directory not found"
+          exit 1
+        fi
+
+    - name: Find JSON Configuration Files
+      id: find_configs
+      run: |
+        echo "Finding JSON configuration files in metadata directory..."
+        
+        if [ -d "metadata" ]; then
+          # Find all JSON files and create a list
+          json_files=($(find metadata -name "*.json" -type f))
+          
+          if [ ${#json_files[@]} -gt 0 ]; then
+            echo "Found ${#json_files[@]} JSON configuration files:"
+            printf '%s\n' "${json_files[@]}"
+            
+            # Create a space-separated list for processing
+            config_files_list=$(printf '%s ' "${json_files[@]}")
+            echo "config_files=$config_files_list" >> $GITHUB_OUTPUT
+            echo "has_configs=true" >> $GITHUB_OUTPUT
+          else
+            echo "No JSON files found in metadata directory"
+            echo "has_configs=false" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "metadata directory not found"
+          echo "has_configs=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Upload JSON Files to Stage
+      if: steps.find_configs.outputs.has_configs == 'true'
+      run: |
+        echo "Uploading JSON files to Stage"
+        snow stage copy --overwrite metadata @dbt_config_stage
+
+    - name: List Files in Stage
+      if: steps.find_configs.outputs.has_configs == 'true'
+      run: |
+        echo "Files in dbt_config_stage:"
+        snow sql -q "LIST @dbt_config_stage;"
+
+    - name: Process Configuration Files with Change Detection
+      if: steps.find_configs.outputs.has_configs == 'true'
+      run: |
+        echo "Processing configuration files with change detection workflow..."
+        
+        # Track overall success
+        overall_success=true
+        processed_feeds=""
+        
+        # Process each JSON file
+        for config_file in ${{ steps.find_configs.outputs.config_files }}; do
+          if [ -f "$config_file" ]; then
+            # Extract feed name from filename (remove .json extension)
+            filename=$(basename "$config_file")
+            feed_name="${filename%.json}"
+            
+            echo "=========================================="
+            echo "Processing configuration: $filename"
+            echo "Feed name: $feed_name"
+            echo "=========================================="
+            
+            # Step 1: Check for changes
+            echo "Step 1: Checking for configuration changes..."
+            change_result=$(snow sql -q "CALL has_config_changes('$feed_name', '$filename');" --format json | jq -r '.[0] | to_entries[0].value' 2>/dev/null || echo "ERROR")
+            
+            echo "Change detection result: $change_result"
+            
+            # Determine if changes were detected
+            changes_detected=false
+            if [[ "$change_result" == *"CHANGES_DETECTED"* ]] || [[ "$change_result" == *"NEW_FEED"* ]]; then
+              changes_detected=true
+              echo "✅ Changes detected - proceeding with deployment"
+            elif [[ "$change_result" == *"NO_CHANGES"* ]]; then
+              echo "ℹ️ No changes detected - skipping deployment for $feed_name"
+              continue
+            else
+              echo "❌ Error in change detection for $feed_name: $change_result"
+              overall_success=false
+              continue
+            fi
+            
+            # Step 2: Execute DBT tasks if changes detected
+            if [ "$changes_detected" = true ]; then
+              echo "Step 2: Executing DBT tasks for feed: $feed_name"
+              execution_result=$(snow sql -q "CALL execute_dbt_tasks_if_changed('$feed_name', '$filename');" --format json | jq -r '.[0] | to_entries[0].value' 2>/dev/null || echo "ERROR")
+              
+              echo "Task execution result: $execution_result"
+              
+              # Check if execution was successful
+              execution_success=false
+              if [[ "$execution_result" == *"successfully"* ]] || [[ "$execution_result" == *"SUCCESS"* ]] || [[ "$execution_result" != *"ERROR"* && "$execution_result" != "ERROR" ]]; then
+                execution_success=true
+                echo "✅ Task execution successful"
+              else
+                echo "❌ Task execution failed for $feed_name: $execution_result"
+                overall_success=false
+                continue
+              fi
+              
+              # Step 3: Resume child tasks if creation was successful
+              if [ "$execution_success" = true ]; then
+                echo "Step 3: Resuming child tasks for feed: $feed_name"
+                resume_result=$(snow sql -q "CALL resume_all_dbt_tasks('$feed_name');" --format json | jq -r '.[0] | to_entries[0].value' 2>/dev/null || echo "ERROR")
+                
+                echo "Resume tasks result: $resume_result"
+                
+                if [[ "$resume_result" == *"ERROR"* ]]; then
+                  echo "❌ Failed to resume tasks for $feed_name: $resume_result"
+                  overall_success=false
+                else
+                  echo "✅ Successfully resumed tasks for $feed_name"
+                fi
+                
+                # Step 4: Monitor execution and show logs
+                echo "Step 4: Monitoring execution for feed: $feed_name"
+                log_result=$(snow sql -q "CALL show_task_creation_log('$feed_name');" --format json 2>/dev/null || echo "[]")
+                
+                echo "Task creation log for $feed_name:"
+                if [ "$log_result" != "[]" ] && [ "$log_result" != "ERROR" ]; then
+                  echo "$log_result" | jq -r '.[] | to_entries[] | "\(.key): \(.value)"' 2>/dev/null || echo "$log_result"
+                else
+                  echo "No logs available or error retrieving logs"
+                fi
+                
+                # Add to processed feeds list
+                if [ -z "$processed_feeds" ]; then
+                  processed_feeds="$feed_name"
+                else
+                  processed_feeds="$processed_feeds, $feed_name"
+                fi
+              fi
+            fi
+            
+            echo "Completed processing for feed: $feed_name"
+            echo "------------------------------------------"
+          fi
+        done
+        
+        # Final summary
+        echo "=========================================="
+        echo "DEPLOYMENT SUMMARY"
+        echo "=========================================="
+        if [ "$overall_success" = true ]; then
+          echo "✅ Overall deployment: SUCCESS"
+        else
+          echo "❌ Overall deployment: FAILED (some feeds may have failed)"
+        fi
+        
+        if [ -n "$processed_feeds" ]; then
+          echo "📋 Successfully processed feeds: $processed_feeds"
+        else
+          echo "📋 No feeds were processed (no changes detected or all failed)"
+        fi
+        
+        echo "=========================================="
+        
+        # Exit with error if any feed failed
+        if [ "$overall_success" = false ]; then
+          echo "❌ Deployment completed with errors. Check logs above for details."
+          exit 1
+        fi
+
+    - name: Cleanup Temporary Files
+      if: always()
+      run: |
+        rm -f ~/.snowflake/config.toml
+        rm -f ~/.snowsql/config
+
+    - name: Deployment Summary
+      if: always()
+      run: |
+        echo "=== Final Deployment Summary ==="
+        echo "Repository: ${{ github.repository }}"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Workflow Status: ${{ job.status }}"
+        
+        if [ "${{ steps.find_configs.outputs.has_configs }}" == "true" ]; then
+          echo "Configuration files processed: YES"
+          echo "Files found: ${{ steps.find_configs.outputs.config_files }}"
+        else
+          echo "Configuration files processed: NO"
+          echo "Reason: No JSON files found in metadata directory"
+        fi
+        echo "================================"
