@@ -15,7 +15,7 @@ env:
   SNOWFLAKE_ROLE: ${{ vars.SNOWFLAKE_ROLE }}
 
 jobs:
-  deploy-dbt-config:
+  deploy-dbt-project-on-snowflake:
     runs-on: ubuntu-latest
     
     steps:
