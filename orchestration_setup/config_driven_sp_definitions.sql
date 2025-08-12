@@ -827,9 +827,9 @@ BEGIN
             is_root_task := TRUE;
         END IF;
         
-        -- Only resume enabled tasks that are NOT root tasks
+        -- Only resume enabled tasks that are NOT root tasks (or) root task without schedule
         IF (enabled = TRUE) THEN
-            IF (is_root_task = FALSE  OR (is_root_task = TRUE and schedule IS NOT NULL)) THEN
+            IF (is_root_task = FALSE  OR (is_root_task = TRUE and schedule IS NULL)) THEN
                 task_full_name := database_name || '.' || schema_name || '.' || feed_name_param || '_' || task_name;
                 resume_sql := 'ALTER TASK ' || task_full_name || ' RESUME;';
                 EXECUTE IMMEDIATE :resume_sql;
