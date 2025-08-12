@@ -773,7 +773,8 @@ $$;
 -- STEP 5: UPDATED TASK MANAGEMENT PROCEDURES
 -- =====================================================================
 
--- Updated procedure to resume all enabled dbt tasks for a specific feed (excluding root task)
+-- Updated procedure to resume all enabled dbt tasks for a specific feed (assuming single root task)
+-- Efficiently handles root task suspension before resuming child tasks
 CREATE OR REPLACE PROCEDURE resume_all_dbt_tasks(feed_name_param STRING)
 RETURNS STRING
 LANGUAGE SQL
@@ -787,15 +788,15 @@ DECLARE
     schema_name STRING;
     task_name STRING;
     task_full_name STRING;
+    root_task_name STRING := NULL;
+    suspend_sql STRING := '';
     resume_sql STRING := '';
     enabled BOOLEAN;
     schedule STRING;
-    depends_on VARIANT;
-    is_root_task BOOLEAN;
     i INTEGER;
     tasks_resumed INTEGER := 0;
     tasks_skipped INTEGER := 0;
-    root_tasks_skipped INTEGER := 0;
+    root_task_found BOOLEAN := FALSE;
 BEGIN
     SELECT config_data INTO :config_data 
     FROM dbt_task_config 
@@ -813,38 +814,55 @@ BEGIN
     schema_name := project_config:schema::STRING;
     tasks_array := config_data:tasks;
     
+    -- First pass: Find and suspend the single root task
     FOR i IN 0 TO (ARRAY_SIZE(tasks_array) - 1) DO
         task_name := tasks_array[i]:name::STRING;
-        enabled := COALESCE(tasks_array[i]:enabled::BOOLEAN, TRUE); -- Default to enabled if not specified
+        enabled := COALESCE(tasks_array[i]:enabled::BOOLEAN, TRUE);
         schedule := tasks_array[i]:schedule::STRING;
-        depends_on := tasks_array[i]:depends_on;
         
-        -- Determine if this is a root task (has schedule OR has no dependencies)
-        is_root_task := FALSE;
-        IF (schedule IS NOT NULL) THEN
-            is_root_task := TRUE;
-        ELSEIF (depends_on IS NULL OR ARRAY_SIZE(depends_on) = 0) THEN
-            is_root_task := TRUE;
+        IF (enabled = TRUE AND schedule IS NOT NULL) THEN
+            root_task_name := database_name || '.' || schema_name || '.' || feed_name_param || '_' || task_name;
+            root_task_found := TRUE;
+            
+            -- Suspend the root task
+            suspend_sql := 'ALTER TASK ' || root_task_name || ' SUSPEND;';
+            EXECUTE IMMEDIATE :suspend_sql;
+            
+            -- Exit loop since we assume only one root task exists
+            EXIT;
         END IF;
+    END FOR;
+    
+    -- Second pass: Resume child tasks (tasks without schedules)
+    FOR i IN 0 TO (ARRAY_SIZE(tasks_array) - 1) DO
+        task_name := tasks_array[i]:name::STRING;
+        enabled := COALESCE(tasks_array[i]:enabled::BOOLEAN, TRUE);
+        schedule := tasks_array[i]:schedule::STRING;
         
-        -- Only resume enabled tasks that are NOT root tasks (or) root task with schedule
-        IF (enabled = TRUE) THEN
-            IF (is_root_task = FALSE  OR (is_root_task = TRUE and schedule IS NOT NULL)) THEN
-                task_full_name := database_name || '.' || schema_name || '.' || feed_name_param || '_' || task_name;
-                resume_sql := 'ALTER TASK ' || task_full_name || ' RESUME;';
-                EXECUTE IMMEDIATE :resume_sql;
-                tasks_resumed := tasks_resumed + 1;
-            ELSE
-                -- Skip root task
-                root_tasks_skipped := root_tasks_skipped + 1;
-            END IF;
-        ELSE
+        -- Only resume enabled tasks that do NOT have a schedule
+        IF (enabled = TRUE AND schedule IS NULL) THEN
+            task_full_name := database_name || '.' || schema_name || '.' || feed_name_param || '_' || task_name;
+            resume_sql := 'ALTER TASK ' || task_full_name || ' RESUME;';
+            EXECUTE IMMEDIATE :resume_sql;
+            tasks_resumed := tasks_resumed + 1;
+        ELSEIF (enabled = FALSE) THEN
             tasks_skipped := tasks_skipped + 1;
         END IF;
     END FOR;
     
-    RETURN 'Successfully resumed ' || tasks_resumed::STRING || ' enabled child tasks for feed: ' || feed_name_param ||
-           ' (Skipped ' || tasks_skipped::STRING || ' disabled tasks, ' || root_tasks_skipped::STRING || ' root task without schedule)';
+    -- Resume the root task if it was found and suspended
+    IF (root_task_found = TRUE) THEN
+        resume_sql := 'ALTER TASK ' || root_task_name || ' RESUME;';
+        EXECUTE IMMEDIATE :resume_sql;
+    END IF;
+    
+    IF (root_task_found = TRUE) THEN
+        RETURN 'Successfully resumed ' || tasks_resumed::STRING || ' child tasks for feed: ' || feed_name_param ||
+               ' (Root task suspended/resumed, skipped ' || tasks_skipped::STRING || ' disabled tasks)';
+    ELSE
+        RETURN 'Successfully resumed ' || tasks_resumed::STRING || ' child tasks for feed: ' || feed_name_param ||
+               ' (No root task found, skipped ' || tasks_skipped::STRING || ' disabled tasks)';
+    END IF;
 END;
 $$;
 
