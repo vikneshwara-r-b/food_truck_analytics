@@ -183,7 +183,7 @@ jobs:
     - name: Upload JSON Files to Stage
       if: steps.find_configs.outputs.has_configs == 'true'
       run: |
-        echo "Uploading JSON files to Stage"
+        echo "Uploading JSON configuration files to Snowflake stage..."
         snow stage copy --overwrite metadata @dbt_config_stage
 
     - name: List Files in Stage
@@ -213,8 +213,23 @@ jobs:
             echo "Feed name: $feed_name"
             echo "=========================================="
             
-            # Step 1: Check for changes
-            echo "Step 1: Checking for configuration changes..."
+            # Step 1: Validate configuration (including circular dependency detection)
+            echo "Step 1: Validating configuration for feed: $feed_name"
+            validation_result=$(snow sql -q "CALL validate_dbt_config('$feed_name', '$filename');" --format json | jq -r '.[0] | to_entries[0].value' 2>/dev/null || echo "ERROR")
+            
+            echo "Validation result: $validation_result"
+            
+            # Check if validation failed
+            if [[ "$validation_result" == *"Error:"* ]] || [[ "$validation_result" == "ERROR" ]]; then
+              echo "❌ Configuration validation failed for $feed_name: $validation_result"
+              overall_success=false
+              continue
+            else
+              echo "✅ Configuration validation successful for $feed_name"
+            fi
+            
+            # Step 2: Check for changes
+            echo "Step 2: Checking for configuration changes..."
             change_result=$(snow sql -q "CALL has_config_changes('$feed_name', '$filename');" --format json | jq -r '.[0] | to_entries[0].value' 2>/dev/null || echo "ERROR")
             
             echo "Change detection result: $change_result"
@@ -233,9 +248,9 @@ jobs:
               continue
             fi
             
-            # Step 2: Execute DBT tasks if changes detected
+            # Step 3: Execute DBT tasks if changes detected
             if [ "$changes_detected" = true ]; then
-              echo "Step 2: Executing DBT tasks for feed: $feed_name"
+              echo "Step 3: Executing DBT tasks for feed: $feed_name"
               execution_result=$(snow sql -q "CALL execute_dbt_tasks_if_changed('$feed_name', '$filename');" --format json | jq -r '.[0] | to_entries[0].value' 2>/dev/null || echo "ERROR")
               
               echo "Task execution result: $execution_result"
@@ -251,9 +266,9 @@ jobs:
                 continue
               fi
               
-              # Step 3: Resume child tasks if creation was successful
+              # Step 4: Resume child tasks if creation was successful
               if [ "$execution_success" = true ]; then
-                echo "Step 3: Resuming child tasks for feed: $feed_name"
+                echo "Step 4: Resuming child tasks for feed: $feed_name"
                 resume_result=$(snow sql -q "CALL resume_all_dbt_tasks('$feed_name');" --format json | jq -r '.[0] | to_entries[0].value' 2>/dev/null || echo "ERROR")
                 
                 echo "Resume tasks result: $resume_result"
@@ -265,8 +280,8 @@ jobs:
                   echo "✅ Successfully resumed tasks for $feed_name"
                 fi
                 
-                # Step 4: Monitor execution and show logs
-                echo "Step 4: Monitoring execution for feed: $feed_name"
+                # Step 5: Monitor execution and show logs
+                echo "Step 5: Monitoring execution for feed: $feed_name"
                 log_result=$(snow sql -q "CALL show_task_creation_log('$feed_name');" --format json 2>/dev/null || echo "[]")
                 
                 echo "Task creation log for $feed_name:"

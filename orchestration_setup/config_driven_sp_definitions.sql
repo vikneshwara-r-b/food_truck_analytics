@@ -309,37 +309,107 @@ EXCEPTION
 END;
 $$;
 
--- Updated procedure to validate JSON configuration for a specific feed (current version only)
-CREATE OR REPLACE PROCEDURE validate_dbt_config(feed_name_param STRING)
+-- Modified procedure to validate JSON configuration with filename parameter (hardcoded stage)
+CREATE OR REPLACE PROCEDURE validate_dbt_config(feed_name_param STRING, config_file_name STRING)
 RETURNS STRING
 LANGUAGE SQL
 AS
 $$
 DECLARE
-    config_data VARIANT;
+    copy_sql STRING;
+    temp_table_name STRING;
+    work_table_name STRING;
+    temp_count_table STRING;
+    temp_new_config_table STRING;
+    new_config_data VARIANT;
+    new_config_hash STRING;
+    config_count INTEGER;
+    timestamp_suffix STRING;
+    
+    -- Validation variables
     project_config VARIANT;
     tasks_array VARIANT;
     validation_result STRING := 'Configuration is valid for feed: ' || feed_name_param;
     i INTEGER;
+    j INTEGER;
+    k INTEGER;
     task_name STRING;
     dbt_command STRING;
     enabled BOOLEAN;
-    depends_on STRING;
-BEGIN
-    -- Get the current configuration for the specified feed
-    SELECT config_data INTO :config_data 
-    FROM dbt_task_config 
-    WHERE feed_name = :feed_name_param AND is_current = TRUE
-    ORDER BY loaded_at DESC 
-    LIMIT 1;
+    depends_on VARIANT;
     
-    -- Check if configuration exists
-    IF (config_data IS NULL) THEN
-        RETURN 'Error: No current configuration found for feed: ' || feed_name_param || '. Please load a JSON file first.';
+    -- Circular dependency detection variables
+    current_task STRING;
+    next_task STRING;
+    task_dependencies VARIANT;
+    dependency_name STRING;
+    path_array ARRAY;
+    path_string STRING;
+    max_depth INTEGER := 10;
+    depth INTEGER;
+    cycle_found BOOLEAN := FALSE;
+    
+BEGIN
+    -- Create a unique timestamp suffix for all temporary tables
+    timestamp_suffix := REGEXP_REPLACE(CURRENT_TIMESTAMP()::STRING, '[ :\.-]', '_');
+    
+    -- Create unique temporary table names
+    temp_table_name := 'temp_config_validate_' || timestamp_suffix;
+    work_table_name := 'work_config_validate_' || timestamp_suffix;
+    temp_count_table := 'temp_count_validate_' || timestamp_suffix;
+    temp_new_config_table := 'temp_new_config_validate_' || timestamp_suffix;
+    
+    -- Create temporary table for loading JSON
+    copy_sql := 'CREATE OR REPLACE TEMPORARY TABLE ' || temp_table_name || ' (json_data VARIANT)';
+    EXECUTE IMMEDIATE :copy_sql;
+    
+    -- Load JSON data from DBT_CONFIG_STAGE (hardcoded stage name)
+    copy_sql := 'COPY INTO ' || temp_table_name || '(json_data) ' ||
+                'FROM @DBT_CONFIG_STAGE/' || config_file_name || ' ' ||
+                'FILE_FORMAT = (TYPE = ''JSON'')';
+    EXECUTE IMMEDIATE :copy_sql;
+    
+    -- Create work table with the JSON data AND calculate hash in one step
+    copy_sql := 'CREATE OR REPLACE TEMPORARY TABLE ' || work_table_name || ' AS ' ||
+                'SELECT json_data, MD5(TO_JSON(json_data)) as config_hash FROM ' || temp_table_name || ' LIMIT 1';
+    EXECUTE IMMEDIATE :copy_sql;
+    
+    -- Check if we have any configuration data using dynamic table name
+    copy_sql := 'CREATE OR REPLACE TEMPORARY TABLE ' || temp_count_table || ' AS SELECT COUNT(*) as cnt FROM ' || work_table_name;
+    EXECUTE IMMEDIATE :copy_sql;
+    
+    -- Use IDENTIFIER to reference the dynamic table name in static SQL
+    SELECT cnt INTO config_count FROM IDENTIFIER(:temp_count_table);
+    
+    -- Clean up count table
+    copy_sql := 'DROP TABLE IF EXISTS ' || temp_count_table;
+    EXECUTE IMMEDIATE :copy_sql;
+    
+    -- If no config data found, clean up and return error
+    IF (config_count = 0) THEN
+        EXECUTE IMMEDIATE ('DROP TABLE IF EXISTS ' || :temp_table_name);
+        EXECUTE IMMEDIATE ('DROP TABLE IF EXISTS ' || :work_table_name);
+        RETURN 'Error: No configuration data found in file: ' || config_file_name || ' at stage: DBT_CONFIG_STAGE';
     END IF;
     
+    -- Get the configuration data using dynamic table name
+    copy_sql := 'CREATE OR REPLACE TEMPORARY TABLE ' || temp_new_config_table || ' AS SELECT json_data FROM ' || work_table_name || ' LIMIT 1';
+    EXECUTE IMMEDIATE :copy_sql;
+    
+    -- Use IDENTIFIER to reference the dynamic table name in static SQL
+    SELECT json_data INTO new_config_data FROM IDENTIFIER(:temp_new_config_table);
+    
+    -- Clean up temp table
+    copy_sql := 'DROP TABLE IF EXISTS ' || temp_new_config_table;
+    EXECUTE IMMEDIATE :copy_sql;
+    
+    -- Clean up main temporary tables
+    EXECUTE IMMEDIATE ('DROP TABLE IF EXISTS ' || :temp_table_name);
+    EXECUTE IMMEDIATE ('DROP TABLE IF EXISTS ' || :work_table_name);
+    
+    -- Now validate the loaded configuration data
     -- Validate project_config section
-    project_config := config_data:project_config;
+    project_config := new_config_data:project_config;
     IF (project_config IS NULL) THEN
         RETURN 'Error: Missing project_config section for feed: ' || feed_name_param;
     END IF;
@@ -358,37 +428,125 @@ BEGIN
     END IF;
     
     -- Validate tasks array
-    tasks_array := config_data:tasks;
+    tasks_array := new_config_data:tasks;
     IF (tasks_array IS NULL OR ARRAY_SIZE(tasks_array) = 0) THEN
         RETURN 'Error: Missing or empty tasks array for feed: ' || feed_name_param;
     END IF;
     
-    -- Validate each task
+    -- Validate each task structure
     FOR i IN 0 TO (ARRAY_SIZE(tasks_array) - 1) DO
         task_name := tasks_array[i]:name::STRING;
         dbt_command := tasks_array[i]:dbt_command::STRING;
         enabled := tasks_array[i]:enabled::BOOLEAN;
-        depends_on := tasks_array[i]:depends_on::STRING;
+        depends_on := tasks_array[i]:depends_on;
         
         IF (task_name IS NULL) THEN
             RETURN 'Error: Task ' || (i + 1)::STRING || ' is missing name field for feed: ' || feed_name_param;
         END IF;
         
         IF (dbt_command IS NULL) THEN
-            RETURN 'Error: Task ' || (i + 1)::STRING || ' is missing dbt_command field for feed: ' || feed_name_param;
+            RETURN 'Error: Task ' || (i + 1)::STRING || ' (' || task_name || ') is missing dbt_command field for feed: ' || feed_name_param;
         END IF;
         
-        IF (enabled IS NULL) THEN
-            RETURN 'Error: Task ' || (i + 1)::STRING || ' is missing enabled field for feed: ' || feed_name_param;
-        END IF;
-
-        IF (depends_on IS NULL) THEN
-            RETURN 'Error: Task ' || (i + 1)::STRING || ' is missing depends field for feed: ' || feed_name_param;
-        END IF;      
+        -- enabled field is optional, defaults to true
+        -- depends_on field is optional, can be null or empty array
         
     END FOR;
     
-    RETURN validation_result;
+    -- CIRCULAR DEPENDENCY DETECTION (Self-contained)
+    -- Check each enabled task for circular dependencies
+    FOR i IN 0 TO (ARRAY_SIZE(tasks_array) - 1) DO
+        current_task := tasks_array[i]:name::STRING;
+        enabled := COALESCE(tasks_array[i]:enabled::BOOLEAN, TRUE);
+        
+        -- Skip disabled tasks
+        IF (NOT enabled) THEN
+            CONTINUE;
+        END IF;
+        
+        -- Start following dependency chain from this task
+        path_array := ARRAY_CONSTRUCT(current_task);
+        path_string := current_task;
+        next_task := current_task;
+        cycle_found := FALSE;
+        
+        -- Follow dependency chain
+        FOR depth IN 1 TO max_depth DO
+            -- Find dependencies for next_task
+            task_dependencies := NULL;
+            FOR j IN 0 TO (ARRAY_SIZE(tasks_array) - 1) DO
+                IF (tasks_array[j]:name::STRING = next_task) THEN
+                    task_dependencies := tasks_array[j]:depends_on;
+                    EXIT;
+                END IF;
+            END FOR;
+            
+            -- If no dependencies, this chain ends
+            IF (task_dependencies IS NULL OR ARRAY_SIZE(task_dependencies) = 0) THEN
+                EXIT;
+            END IF;
+            
+            -- Get first enabled dependency
+            next_task := NULL;
+            FOR j IN 0 TO (ARRAY_SIZE(task_dependencies) - 1) DO
+                dependency_name := task_dependencies[j]::STRING;
+                
+                -- Check if this dependency is enabled
+                FOR k IN 0 TO (ARRAY_SIZE(tasks_array) - 1) DO
+                    IF (tasks_array[k]:name::STRING = dependency_name) THEN
+                        IF (COALESCE(tasks_array[k]:enabled::BOOLEAN, TRUE) = TRUE) THEN
+                            next_task := dependency_name;
+                            EXIT;
+                        END IF;
+                    END IF;
+                END FOR;
+                
+                -- If we found an enabled dependency, use it
+                IF (next_task IS NOT NULL) THEN
+                    EXIT;
+                END IF;
+            END FOR;
+            
+            -- If no enabled dependency found, end this chain
+            IF (next_task IS NULL) THEN
+                EXIT;
+            END IF;
+            
+            -- Check if next_task creates a cycle
+            FOR j IN 0 TO (ARRAY_SIZE(path_array) - 1) DO
+                IF (GET(path_array, j)::STRING = next_task) THEN
+                    cycle_found := TRUE;
+                    path_string := path_string || ' → ' || next_task;
+                    EXIT;
+                END IF;
+            END FOR;
+            
+            -- If cycle found, return error immediately
+            IF (cycle_found) THEN
+                RETURN 'Error: Circular dependency detected: ' || path_string;
+            END IF;
+            
+            -- Add to path and continue
+            path_array := ARRAY_APPEND(path_array, next_task);
+            path_string := path_string || ' → ' || next_task;
+        END FOR;
+        
+        -- Check for potential infinite loop
+        IF (depth >= max_depth AND NOT cycle_found) THEN
+            RETURN 'Error: Potential circular dependency (chain too long) starting from: ' || current_task;
+        END IF;
+    END FOR;
+    
+    RETURN validation_result || ' - No circular dependencies detected';
+    
+EXCEPTION
+    WHEN OTHER THEN
+        -- Clean up all temporary tables in case of error
+        EXECUTE IMMEDIATE ('DROP TABLE IF EXISTS ' || :temp_table_name);
+        EXECUTE IMMEDIATE ('DROP TABLE IF EXISTS ' || :work_table_name);
+        EXECUTE IMMEDIATE ('DROP TABLE IF EXISTS ' || :temp_count_table);
+        EXECUTE IMMEDIATE ('DROP TABLE IF EXISTS ' || :temp_new_config_table);
+        RETURN 'Error: Failed to validate configuration for feed ' || feed_name_param || ': ' || SQLERRM;
 END;
 $$;
 
