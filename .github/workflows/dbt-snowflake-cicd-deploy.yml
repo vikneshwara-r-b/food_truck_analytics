@@ -13,6 +13,7 @@ env:
   SNOWFLAKE_SCHEMA: ${{ vars.SNOWFLAKE_SCHEMA }}
   SNOWFLAKE_WAREHOUSE: ${{ vars.SNOWFLAKE_WAREHOUSE }}
   SNOWFLAKE_ROLE: ${{ vars.SNOWFLAKE_ROLE }}
+  DBT_PROJECT_NAME: ${{ vars.DBT_PROJECT_NAME }}
 
 jobs:
   deploy-dbt-project-on-snowflake:
@@ -138,7 +139,7 @@ jobs:
          # Install dependencies locally
          dbt deps
          # Deploy DBT project from current branch
-         snow dbt deploy FOOD_TRUCK_ANALYTICS_DBT_PROJECT --force -v
+         snow dbt deploy $DBT_PROJECT_NAME --force -v
 
     - name: Deploy stored procedure utilities
       run: |
