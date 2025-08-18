@@ -1204,23 +1204,27 @@ $$;
 
 -- View to show current feed configurations with hash
 CREATE OR REPLACE VIEW current_feed_configs AS
+WITH feed_task_stats AS (
+    SELECT 
+        dtc.feed_name,
+        dtc.config_hash,
+        dtc.loaded_at,
+        ARRAY_SIZE(dtc.config_data:tasks) as total_tasks,
+        COUNT(CASE WHEN COALESCE(t.value:enabled::BOOLEAN, TRUE) = TRUE THEN 1 END) as enabled_tasks,
+        COUNT(CASE WHEN COALESCE(t.value:enabled::BOOLEAN, TRUE) = FALSE THEN 1 END) as disabled_tasks
+    FROM dbt_task_config dtc,
+         LATERAL FLATTEN(input => dtc.config_data:tasks) t
+    WHERE dtc.is_current = TRUE
+    GROUP BY dtc.feed_name, dtc.config_hash, dtc.loaded_at, dtc.config_data:tasks
+)
 SELECT 
     feed_name,
     config_hash,
     loaded_at,
-    ARRAY_SIZE(config_data:tasks) as total_tasks,
-    (
-        SELECT COUNT(*)
-        FROM TABLE(FLATTEN(config_data:tasks)) t
-        WHERE COALESCE(t.value:enabled::BOOLEAN, TRUE) = TRUE
-    ) as enabled_tasks,
-    (
-        SELECT COUNT(*)
-        FROM TABLE(FLATTEN(config_data:tasks)) t
-        WHERE COALESCE(t.value:enabled::BOOLEAN, TRUE) = FALSE
-    ) as disabled_tasks
-FROM dbt_task_config 
-WHERE is_current = TRUE
+    total_tasks,
+    enabled_tasks,
+    disabled_tasks
+FROM feed_task_stats
 ORDER BY feed_name;
 
 -- =====================================================================
