@@ -10,7 +10,7 @@
     {
       "name": "silver_staging_setup",
       "enabled": true,
-      "dbt_command": "run --select tag:silver,tag:staging",
+      "dbt_command": "run --select tag:silver,tag:staging,tag:utils",
       "depends_on": [],
       "schedule": "USING CRON 0 9-17 * * * UTC"
     },
