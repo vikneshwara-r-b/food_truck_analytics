@@ -1,4 +1,19 @@
 target/
 dbt_packages/
 logs/
+
+# Private keys and sensitive files - NEVER COMMIT THESE
+*.pem
+*.key
+*.p12
+*.pfx
+snowflake_rsa_key*
+snowflake_public_key*
+*_rsa_key*
+*_public_key*
+
+# Passphrase and secret files
+*.passphrase
+.env.local
+.env.*.local
 package-lock.yml

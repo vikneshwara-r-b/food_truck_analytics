@@ -2,13 +2,14 @@ name: DBT Snowflake CI/CD deploy
 
 on:
   push:
-    branches: [ "release/v.1.1" ]
+    branches: [ "feature/snowflake-service-user-setup" ]
   workflow_dispatch:
 
 env:
   SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
   SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-  SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+  SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+  SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE }}
   SNOWFLAKE_DATABASE: ${{ vars.SNOWFLAKE_DATABASE }}
   SNOWFLAKE_SCHEMA: ${{ vars.SNOWFLAKE_SCHEMA }}
   SNOWFLAKE_WAREHOUSE: ${{ vars.SNOWFLAKE_WAREHOUSE }}
@@ -54,12 +55,37 @@ jobs:
         # Create config directory
         mkdir -p ~/.snowflake
         
+        # Create encrypted private key file from secret
+        echo "$SNOWFLAKE_PRIVATE_KEY" > ~/.snowflake/snowflake_private_key_encrypted.pem
+        chmod 600 ~/.snowflake/snowflake_private_key_encrypted.pem
+        
+        # Decrypt the private key if passphrase is provided
+        if [ -n "$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE" ]; then
+          echo "Decrypting passphrase-protected private key..."
+          openssl rsa -in ~/.snowflake/snowflake_private_key_encrypted.pem \
+            -out ~/.snowflake/snowflake_private_key.pem \
+            -passin pass:"$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Private key decrypted successfully"
+            chmod 600 ~/.snowflake/snowflake_private_key.pem
+            # Remove encrypted version for security
+            rm -f ~/.snowflake/snowflake_private_key_encrypted.pem
+          else
+            echo "❌ Failed to decrypt private key. Please verify the passphrase."
+            exit 1
+          fi
+        else
+          echo "No passphrase provided, using unencrypted private key"
+          mv ~/.snowflake/snowflake_private_key_encrypted.pem ~/.snowflake/snowflake_private_key.pem
+        fi
+        
         # Create connection configuration
         cat > ~/.snowflake/config.toml << EOF
         [connections.default]
         account = "$SNOWFLAKE_ACCOUNT"
         user = "$SNOWFLAKE_USER"
-        password = "$SNOWFLAKE_PASSWORD"
+        private_key_path = "~/.snowflake/snowflake_private_key.pem"
         database = "$SNOWFLAKE_DATABASE"
         schema = "$SNOWFLAKE_SCHEMA"
         warehouse = "$SNOWFLAKE_WAREHOUSE"
@@ -88,12 +114,16 @@ jobs:
     - name: Configure SnowSQL
       run: |
         mkdir -p ~/.snowsql
+        
+        # Copy decrypted private key for SnowSQL (already decrypted in previous step)
+        cp ~/.snowflake/snowflake_private_key.pem ~/.snowsql/
+        
         cat > ~/.snowsql/config << EOF
         [connections]
         [connections.default]
         accountname = $SNOWFLAKE_ACCOUNT
         username = $SNOWFLAKE_USER
-        password = $SNOWFLAKE_PASSWORD
+        private_key_path = ~/.snowsql/snowflake_private_key.pem
         dbname = $SNOWFLAKE_DATABASE
         schemaname = $SNOWFLAKE_SCHEMA
         warehousename = $SNOWFLAKE_WAREHOUSE
@@ -107,6 +137,7 @@ jobs:
         
         # Set proper permissions
         chmod 600 ~/.snowsql/config
+        chmod 600 ~/.snowsql/snowflake_private_key.pem
 
     - name: Debug Connection Parameters
       run: |
@@ -116,10 +147,33 @@ jobs:
         echo "Database length: ${#SNOWFLAKE_DATABASE}"
         echo "Account starts with: ${SNOWFLAKE_ACCOUNT:0:3}..."
         echo "User: $SNOWFLAKE_USER"
+        echo "Using keypair authentication with passphrase protection"
+        
+        # Check if passphrase is configured
+        if [ -n "$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE" ]; then
+          echo "✅ Passphrase-protected private key is configured"
+        else
+          echo "⚠️ No passphrase configured (using unencrypted private key)"
+        fi
+        
+        # Check if private key file exists
+        if [ -f ~/.snowflake/snowflake_private_key.pem ]; then
+          echo "✅ Private key file created successfully"
+          # Verify it's a valid RSA key
+          openssl rsa -in ~/.snowflake/snowflake_private_key.pem -check -noout 2>/dev/null
+          if [ $? -eq 0 ]; then
+            echo "✅ Private key is valid"
+          else
+            echo "❌ Private key validation failed"
+          fi
+        else
+          echo "❌ Error: Private key file not found"
+          exit 1
+        fi
         
         # Check for special characters that might cause issues
         if [[ "$SNOWFLAKE_ACCOUNT" =~ [^a-zA-Z0-9._-] ]]; then
-          echo "Warning: Account name contains special characters"
+          echo "⚠️ Warning: Account name contains special characters"
         fi
 
     - name: Test Snowflake CLI Connection
@@ -333,8 +387,14 @@ jobs:
     - name: Cleanup Temporary Files
       if: always()
       run: |
+        # Securely remove all private key files
         rm -f ~/.snowflake/config.toml
+        rm -f ~/.snowflake/snowflake_private_key.pem
+        rm -f ~/.snowflake/snowflake_private_key_encrypted.pem
         rm -f ~/.snowsql/config
+        rm -f ~/.snowsql/snowflake_private_key.pem
+        
+        echo "✅ All temporary files and private keys have been securely removed"
 
     - name: Deployment Summary
       if: always()
