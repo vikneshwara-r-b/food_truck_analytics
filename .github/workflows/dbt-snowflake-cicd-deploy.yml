@@ -124,7 +124,7 @@ jobs:
         [connections.default]
         accountname = $SNOWFLAKE_ACCOUNT
         username = $SNOWFLAKE_USER
-        private_key_path = ~/.snowsql/snowflake_private_key.pem
+        private_key_path = $HOME/.snowsql/snowflake_private_key.pem
         dbname = $SNOWFLAKE_DATABASE
         schemaname = $SNOWFLAKE_SCHEMA
         warehousename = $SNOWFLAKE_WAREHOUSE
@@ -142,50 +142,157 @@ jobs:
 
     - name: Debug Connection Parameters
       run: |
-        echo "Debugging connection parameters..."
-        echo "Account length: ${#SNOWFLAKE_ACCOUNT}"
-        echo "User length: ${#SNOWFLAKE_USER}"
-        echo "Database length: ${#SNOWFLAKE_DATABASE}"
-        echo "Account starts with: ${SNOWFLAKE_ACCOUNT:0:3}..."
-        echo "User: $SNOWFLAKE_USER"
-        echo "Using keypair authentication with passphrase protection"
+        echo "=========================================="
+        echo "DEBUGGING CONNECTION PARAMETERS"
+        echo "=========================================="
         
-        # Check if passphrase is configured
+        echo ""
+        echo "📋 Environment Variables:"
+        echo "  Account length: ${#SNOWFLAKE_ACCOUNT}"
+        echo "  Account starts with: ${SNOWFLAKE_ACCOUNT:0:3}..."
+        echo "  User: $SNOWFLAKE_USER"
+        echo "  Database: $SNOWFLAKE_DATABASE"
+        echo "  Schema: $SNOWFLAKE_SCHEMA"
+        echo "  Warehouse: $SNOWFLAKE_WAREHOUSE"
+        echo "  Role: $SNOWFLAKE_ROLE"
+        echo "  DBT Project: $DBT_PROJECT_NAME"
+        
+        echo ""
+        echo "🔐 Authentication Configuration:"
         if [ -n "$SNOWFLAKE_PRIVATE_KEY_PASSPHRASE" ]; then
-          echo "✅ Passphrase-protected private key is configured"
+          echo "  ✅ Passphrase-protected private key is configured"
         else
-          echo "⚠️ No passphrase configured (using unencrypted private key)"
+          echo "  ⚠️ No passphrase configured (using unencrypted private key)"
         fi
         
-        # Check if private key file exists
+        echo ""
+        echo "📂 File System Check:"
+        echo "  HOME directory: $HOME"
+        echo "  Current directory: $(pwd)"
+        
+        echo ""
+        echo "🔑 Private Key Files:"
         if [ -f ~/.snowflake/snowflake_private_key.pem ]; then
-          echo "✅ Private key file created successfully"
+          echo "  ✅ Snowflake CLI key exists: ~/.snowflake/snowflake_private_key.pem"
+          ls -lh ~/.snowflake/snowflake_private_key.pem
+          
           # Verify it's a valid RSA key
           openssl rsa -in ~/.snowflake/snowflake_private_key.pem -check -noout 2>/dev/null
           if [ $? -eq 0 ]; then
-            echo "✅ Private key is valid"
+            echo "  ✅ Private key is valid (RSA check passed)"
           else
-            echo "❌ Private key validation failed"
+            echo "  ❌ Private key validation failed"
           fi
         else
-          echo "❌ Error: Private key file not found"
+          echo "  ❌ Error: Snowflake CLI private key file not found"
           exit 1
         fi
         
-        # Check for special characters that might cause issues
-        if [[ "$SNOWFLAKE_ACCOUNT" =~ [^a-zA-Z0-9._-] ]]; then
-          echo "⚠️ Warning: Account name contains special characters"
+        if [ -f ~/.snowsql/snowflake_private_key.pem ]; then
+          echo "  ✅ SnowSQL key exists: ~/.snowsql/snowflake_private_key.pem"
+          ls -lh ~/.snowsql/snowflake_private_key.pem
+        else
+          echo "  ❌ Error: SnowSQL private key file not found"
+          exit 1
         fi
+        
+        echo ""
+        echo "📝 Configuration Files:"
+        if [ -f ~/.snowflake/config.toml ]; then
+          echo "  ✅ Snowflake CLI config exists: ~/.snowflake/config.toml"
+          ls -lh ~/.snowflake/config.toml
+          echo "  Config preview (sanitized):"
+          sed 's/private_key_path.*/private_key_path = "[REDACTED]"/' ~/.snowflake/config.toml | head -20
+        else
+          echo "  ❌ Snowflake CLI config not found"
+        fi
+        
+        if [ -f ~/.snowsql/config ]; then
+          echo ""
+          echo "  ✅ SnowSQL config exists: ~/.snowsql/config"
+          ls -lh ~/.snowsql/config
+          echo "  Config preview (sanitized):"
+          sed 's/private_key_path.*/private_key_path = [REDACTED]/' ~/.snowsql/config | head -20
+        else
+          echo "  ❌ SnowSQL config not found"
+        fi
+        
+        echo ""
+        echo "⚠️ Validation Checks:"
+        if [[ "$SNOWFLAKE_ACCOUNT" =~ [^a-zA-Z0-9._-] ]]; then
+          echo "  ⚠️ Warning: Account name contains special characters"
+        else
+          echo "  ✅ Account name format looks valid"
+        fi
+        
+        echo ""
+        echo "=========================================="
 
     - name: Test Snowflake CLI Connection
       run: |
+        echo "=========================================="
+        echo "TESTING SNOWFLAKE CLI CONNECTION"
+        echo "=========================================="
+        
+        echo ""
+        echo "🔌 Attempting to connect with Snowflake CLI..."
+        echo "   Using config: ~/.snowflake/config.toml"
+        echo "   Authenticator: SNOWFLAKE_JWT"
+        echo ""
+        
         # Test connection with Snowflake CLI
-        snow sql -q "SELECT CURRENT_VERSION();"
+        if snow sql -q "SELECT CURRENT_VERSION();" 2>&1 | tee /tmp/snow_output.log; then
+          echo ""
+          echo "✅ Snowflake CLI connection successful!"
+        else
+          echo ""
+          echo "❌ Snowflake CLI connection failed!"
+          echo "Error output:"
+          cat /tmp/snow_output.log
+          exit 1
+        fi
+        
+        echo "=========================================="
   
     - name: Test SnowSQL Connection
       run: |
-        # Test using config file first
-        ~/bin/snowsql -c default -q "SELECT CURRENT_VERSION();" -o exit_on_error=true
+        echo "=========================================="
+        echo "TESTING SNOWSQL CONNECTION"
+        echo "=========================================="
+        
+        echo ""
+        echo "🔌 Attempting to connect with SnowSQL..."
+        echo "   Using config: ~/.snowsql/config"
+        echo "   Connection: default"
+        echo "   Private key path: $HOME/.snowsql/snowflake_private_key.pem"
+        echo ""
+        
+        # Test using config file
+        if ~/bin/snowsql -c default -q "SELECT CURRENT_VERSION();" -o exit_on_error=true 2>&1 | tee /tmp/snowsql_output.log; then
+          echo ""
+          echo "✅ SnowSQL connection successful!"
+        else
+          echo ""
+          echo "❌ SnowSQL connection failed!"
+          echo "Error output:"
+          cat /tmp/snowsql_output.log
+          
+          echo ""
+          echo "🔍 Additional debugging info:"
+          echo "   Checking if key file is readable:"
+          if [ -r "$HOME/.snowsql/snowflake_private_key.pem" ]; then
+            echo "   ✅ Key file is readable"
+          else
+            echo "   ❌ Key file is not readable"
+          fi
+          
+          echo "   Full path being used: $HOME/.snowsql/snowflake_private_key.pem"
+          echo "   Resolved to: $(realpath $HOME/.snowsql/snowflake_private_key.pem 2>/dev/null || echo 'Path not found')"
+          
+          exit 1
+        fi
+        
+        echo "=========================================="
 
     - name: Install dbt dependencies and deploy DBT project
       run: |
