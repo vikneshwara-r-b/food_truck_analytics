@@ -85,6 +85,7 @@ jobs:
         [connections.default]
         account = "$SNOWFLAKE_ACCOUNT"
         user = "$SNOWFLAKE_USER"
+        authenticator = "SNOWFLAKE_JWT"
         private_key_path = "~/.snowflake/snowflake_private_key.pem"
         database = "$SNOWFLAKE_DATABASE"
         schema = "$SNOWFLAKE_SCHEMA"
