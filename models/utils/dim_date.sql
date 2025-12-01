@@ -2,11 +2,34 @@
 -- 1. Generate date spine for business calendar
 -- 2. Add all date attributes needed for analysis
 -- 3. Include fiscal calendar and holidays
+-- Note: This table is created only if it doesn't exist (one-time creation)
+
+{% set table_exists = adapter.get_relation(
+    database=target.database,
+    schema=var('schemas', {}).get('gold', target.schema ~ '_gold'),
+    identifier='dim_date'
+) %}
+
+{% if table_exists is none %}
+    {{ log('✨ Creating dim_date dimension table for the first time...', info=True) }}
 
 {{ config(
     materialized='table',
     schema='gold'
 ) }}
+{% else %}
+    {{ log('⏭️  dim_date already exists, skipping creation', info=True) }}
+    {{ config(
+        materialized='table',
+        schema='gold'
+    ) }}
+    
+    -- Return empty result set to skip execution
+    SELECT * FROM {{ table_exists }} WHERE 1=0
+    
+{% endif %}
+
+{% if table_exists is none %}
 
 WITH date_spine AS (
     {{ dbt_utils.date_spine(
@@ -96,3 +119,5 @@ date_attributes AS (
 )
 
 SELECT * FROM date_attributes
+
+{% endif %}
