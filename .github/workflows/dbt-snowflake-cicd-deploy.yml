@@ -2,7 +2,7 @@ name: DBT Snowflake CI/CD deploy
 
 on:
   push:
-    branches: [ "feature/snowflake-service-user-setup" ]
+    branches: [ "release/v.1.1" ]
   workflow_dispatch:
 
 env:
